@@ -4,9 +4,8 @@
   <meta charset="UTF-8">
   <!-- Mobile-optimized viewport -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Mobile Loot & Dodge</title>
+  <title>Mobile Loot & Dodge – Enhanced</title>
   <style>
-    /* Remove default margins and disable text selection */
     html, body {
       margin: 0;
       padding: 0;
@@ -16,11 +15,15 @@
       background: #111;
       color: #fff;
       font-family: sans-serif;
+      /* Disable default touch actions */
+      touch-action: none;
     }
     /* Fullscreen canvas */
     #gameCanvas {
       display: block;
       background: #222;
+      /* Disable default touch actions on canvas too */
+      touch-action: none;
     }
     /* Fixed scoreboard */
     #scoreboard {
@@ -34,7 +37,7 @@
       padding: 5px 10px;
       border-radius: 5px;
     }
-    /* Message overlay (for rewards, game over, etc.) */
+    /* Message overlay */
     #message {
       position: fixed;
       top: 50%;
@@ -49,12 +52,31 @@
       opacity: 0;
       transition: opacity 0.3s ease;
     }
+    /* Shoot Button styling */
+    #shootBtn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 30;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: none;
+      background-color: rgba(255, 255, 255, 0.8);
+      font-size: 16px;
+      font-weight: bold;
+      color: #111;
+      outline: none;
+      cursor: pointer;
+      box-shadow: 0px 4px 6px rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
   <div id="scoreboard">Score: 0 | High Score: 0 | Lives: 3</div>
   <div id="message"></div>
+  <button id="shootBtn">SHOOT</button>
   <script>
     // ========= Global Variables and Canvas Setup =========
     const canvas = document.getElementById("gameCanvas");
@@ -64,7 +86,6 @@
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      // Keep the player on screen if already defined.
       if (player) {
         player.y = canvas.height - 60;
       }
@@ -83,10 +104,10 @@
     let lives = 3;
     let highScore = Number(localStorage.getItem("highScore")) || 0;
 
-    // Power-up timers (in milliseconds)
-    let shieldTimer = 0;      // When > 0, player is immune to enemy collisions
-    let doubleScoreTimer = 0; // When > 0, scoring is doubled
-    let slowTimeTimer = 0;    // When > 0, enemy speeds are reduced
+    // Power-up timers (in ms)
+    let shieldTimer = 0;
+    let doubleScoreTimer = 0;
+    let slowTimeTimer = 0;
     let scoreMultiplier = 1;
     let enemySpeedMultiplier = 1;
 
@@ -96,7 +117,6 @@
       y: canvas.height - 60,
       width: 40,
       height: 40,
-      // Draw the ship as a triangle
       draw() {
         ctx.save();
         ctx.fillStyle = shieldTimer > 0 ? "#0ff" : "#0f0";
@@ -110,9 +130,10 @@
       }
     };
 
-    // ========= Arrays for Enemies and Loot Boxes =========
+    // ========= Arrays for Enemies, Loot Boxes, and Bullets =========
     const enemies = [];
     const lootBoxes = [];
+    const bullets = [];
 
     // ========= Reward Options for Loot Boxes =========
     const rewards = [
@@ -160,7 +181,6 @@
     ];
 
     // ========= Utility Functions =========
-    // Check for rectangle collision
     function rectsIntersect(a, b) {
       return !(a.x > b.x + b.width ||
                a.x + a.width < b.x ||
@@ -168,17 +188,13 @@
                a.y + a.height < b.y);
     }
 
-    // Show a temporary message (reward, game over, etc.)
     function displayMessage(text) {
       const msgEl = document.getElementById("message");
       msgEl.textContent = text;
       msgEl.style.opacity = 1;
-      setTimeout(() => {
-        msgEl.style.opacity = 0;
-      }, 1500);
+      setTimeout(() => { msgEl.style.opacity = 0; }, 1500);
     }
 
-    // Update the scoreboard display
     function updateScoreboard() {
       document.getElementById("scoreboard").innerHTML =
         "Score: " + Math.floor(score) +
@@ -186,20 +202,20 @@
         " | Lives: " + lives;
     }
 
-    // ========= Touch Controls =========
-    // On mobile, tapping or dragging sets the player’s x position.
+    // ========= Touch Controls for Moving the Ship =========
     function handleTouch(evt) {
       evt.preventDefault();
-      const touch = evt.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      const touchX = touch.clientX - rect.left;
-      // If game over, tapping anywhere restarts the game.
-      if (gameOver) {
-        restartGame();
-        return;
+      if (evt.touches.length > 0) {
+        const touch = evt.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        const touchX = touch.clientX - rect.left;
+        if (gameOver) {
+          restartGame();
+          return;
+        }
+        // Clamp player's position within screen bounds.
+        player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, touchX));
       }
-      // Clamp the new position so the ship stays fully on-screen.
-      player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, touchX));
     }
     canvas.addEventListener("touchstart", handleTouch, {passive: false});
     canvas.addEventListener("touchmove", handleTouch, {passive: false});
@@ -209,7 +225,6 @@
       const size = 30;
       const x = Math.random() * (canvas.width - size);
       const y = -size;
-      // Base speed between 200 and 300 pixels per second (will be scaled by enemySpeedMultiplier)
       const speed = 200 + Math.random() * 100;
       enemies.push({ x, y, width: size, height: size, speed });
     }
@@ -218,10 +233,34 @@
       const size = 25;
       const x = Math.random() * (canvas.width - size);
       const y = -size;
-      // Loot boxes fall at a similar speed as enemies
       const speed = 150 + Math.random() * 50;
       lootBoxes.push({ x, y, width: size, height: size, speed });
     }
+
+    // ========= Bullet Constructor and Shooting Function =========
+    function shootBullet() {
+      // Create a bullet starting from the player's top-center.
+      const bulletWidth = 5;
+      const bulletHeight = 10;
+      const bulletSpeed = 500; // upward speed in pixels per second
+      bullets.push({
+        x: player.x - bulletWidth / 2,
+        y: player.y - player.height / 2,
+        width: bulletWidth,
+        height: bulletHeight,
+        speed: bulletSpeed
+      });
+    }
+
+    // Attach event to the shoot button.
+    document.getElementById("shootBtn").addEventListener("touchstart", (evt) => {
+      evt.preventDefault();
+      if (!gameOver) shootBullet();
+    }, {passive: false});
+    document.getElementById("shootBtn").addEventListener("click", (evt) => {
+      evt.preventDefault();
+      if (!gameOver) shootBullet();
+    });
 
     // ========= Game Loop =========
     function gameLoop(timestamp) {
@@ -229,58 +268,46 @@
       const deltaTime = timestamp - lastTime;
       lastTime = timestamp;
 
-      // Clear the canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Increase score gradually (and apply multiplier)
+      // Increase score gradually with multiplier.
       score += (deltaTime / 100) * scoreMultiplier;
 
-      // Update power-up timers
-      if (shieldTimer > 0) {
-        shieldTimer -= deltaTime;
-        if (shieldTimer < 0) shieldTimer = 0;
+      // Update power-up timers.
+      if (shieldTimer > 0) { shieldTimer -= deltaTime; if (shieldTimer < 0) shieldTimer = 0; }
+      if (doubleScoreTimer > 0) { 
+        doubleScoreTimer -= deltaTime; 
+        if (doubleScoreTimer <= 0) { doubleScoreTimer = 0; scoreMultiplier = 1; }
       }
-      if (doubleScoreTimer > 0) {
-        doubleScoreTimer -= deltaTime;
-        if (doubleScoreTimer <= 0) {
-          doubleScoreTimer = 0;
-          scoreMultiplier = 1;
-        }
-      }
-      if (slowTimeTimer > 0) {
-        slowTimeTimer -= deltaTime;
-        if (slowTimeTimer <= 0) {
-          slowTimeTimer = 0;
-          enemySpeedMultiplier = 1;
-        }
+      if (slowTimeTimer > 0) { 
+        slowTimeTimer -= deltaTime; 
+        if (slowTimeTimer <= 0) { slowTimeTimer = 0; enemySpeedMultiplier = 1; }
       }
 
-      // Spawn enemies every ~800ms (slightly randomized)
+      // Spawn enemies.
       enemySpawnTimer += deltaTime;
       if (enemySpawnTimer > 800 + Math.random() * 200) {
         createEnemy();
         enemySpawnTimer = 0;
       }
-      // Spawn loot boxes every ~6 seconds
+      // Spawn loot boxes.
       lootSpawnTimer += deltaTime;
       if (lootSpawnTimer > 6000 + Math.random() * 2000) {
         createLootBox();
         lootSpawnTimer = 0;
       }
 
-      // Update and draw enemies
+      // Update and draw enemies.
       for (let i = enemies.length - 1; i >= 0; i--) {
         const enemy = enemies[i];
         enemy.y += enemy.speed * enemySpeedMultiplier * (deltaTime / 1000);
-        // Draw enemy as a red square
         ctx.fillStyle = "#f00";
         ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
-        // Remove enemy if it goes off-screen
         if (enemy.y > canvas.height) {
           enemies.splice(i, 1);
           continue;
         }
-        // Check collision with player
+        // Check collision with player.
         if (rectsIntersect(enemy, {
           x: player.x - player.width / 2,
           y: player.y - player.height / 2,
@@ -288,59 +315,74 @@
           height: player.height
         })) {
           if (shieldTimer > 0) {
-            // Consume the shield and remove the enemy
             shieldTimer = 0;
             enemies.splice(i, 1);
             displayMessage("Shield saved you!");
           } else {
-            // Lose a life and remove the enemy
             lives--;
             enemies.splice(i, 1);
             displayMessage("Ouch!");
-            if (lives <= 0) {
-              endGame();
-            }
+            if (lives <= 0) { endGame(); }
           }
         }
       }
 
-      // Update and draw loot boxes
+      // Update and draw loot boxes.
       for (let i = lootBoxes.length - 1; i >= 0; i--) {
         const loot = lootBoxes[i];
         loot.y += loot.speed * (deltaTime / 1000);
-        // Draw loot box as a blue square
         ctx.fillStyle = "#00f";
         ctx.fillRect(loot.x, loot.y, loot.width, loot.height);
-        // Remove if off-screen
         if (loot.y > canvas.height) {
           lootBoxes.splice(i, 1);
           continue;
         }
-        // Check collision with player
+        // Check collision with player.
         if (rectsIntersect(loot, {
           x: player.x - player.width / 2,
           y: player.y - player.height / 2,
           width: player.width,
           height: player.height
         })) {
-          // Choose a random reward
           const reward = rewards[Math.floor(Math.random() * rewards.length)];
           reward.effect();
           lootBoxes.splice(i, 1);
         }
       }
 
-      // Draw the player ship
+      // Update and draw bullets.
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        bullet.y -= bullet.speed * (deltaTime / 1000);
+        ctx.fillStyle = "#ff0";
+        ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+        if (bullet.y + bullet.height < 0) {
+          bullets.splice(i, 1);
+          continue;
+        }
+        // Check collision with enemies.
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          if (rectsIntersect(bullet, enemies[j])) {
+            // Enemy hit by bullet.
+            enemies.splice(j, 1);
+            bullets.splice(i, 1);
+            score += 100;
+            displayMessage("+100!");
+            break;
+          }
+        }
+      }
+
+      // Draw the player ship.
       player.draw();
 
-      // Update scoreboard and high score
+      // Update scoreboard and high score.
       if (score > highScore) {
         highScore = score;
         localStorage.setItem("highScore", Math.floor(highScore));
       }
       updateScoreboard();
 
-      // If game over, draw overlay text
       if (gameOver) {
         ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -350,10 +392,9 @@
         ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
         ctx.font = "24px sans-serif";
         ctx.fillText("Tap to Restart", canvas.width / 2, canvas.height / 2 + 20);
-        return; // Stop updating game objects
+        return;
       }
 
-      // Continue game loop
       requestAnimationFrame(gameLoop);
     }
 
@@ -364,7 +405,6 @@
     }
 
     function restartGame() {
-      // Reset game state variables
       score = 0;
       lives = 3;
       shieldTimer = 0;
@@ -374,31 +414,20 @@
       enemySpeedMultiplier = 1;
       enemies.length = 0;
       lootBoxes.length = 0;
+      bullets.length = 0;
       enemySpawnTimer = 0;
       lootSpawnTimer = 0;
       gameOver = false;
       lastTime = 0;
-      // Center the player horizontally and near the bottom
       player.x = canvas.width / 2;
       player.y = canvas.height - 60;
       requestAnimationFrame(gameLoop);
     }
 
     // ========= Start the Game =========
-    // Start the game loop
     requestAnimationFrame(gameLoop);
-
-    // Also allow a tap (mousedown for desktops or touchend) to restart when game over.
-    canvas.addEventListener("touchend", (evt) => {
-      if (gameOver) {
-        restartGame();
-      }
-    });
-    canvas.addEventListener("mousedown", (evt) => {
-      if (gameOver) {
-        restartGame();
-      }
-    });
+    canvas.addEventListener("touchend", () => { if (gameOver) restartGame(); });
+    canvas.addEventListener("mousedown", () => { if (gameOver) restartGame(); });
   </script>
 </body>
 </html>
