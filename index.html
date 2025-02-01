@@ -2,439 +2,252 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Mobile-optimized viewport -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Mobile Loot & Dodge – Enhanced</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Falling Letters with Realistic Physics</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       overflow: hidden;
-      -webkit-tap-highlight-color: transparent;
-      user-select: none;
-      background: #111;
-      color: #fff;
-      font-family: sans-serif;
-      touch-action: none; /* Disable default gestures */
+      background-color: #000; /* Dark background */
     }
-    /* Fullscreen canvas */
-    #gameCanvas {
+    canvas {
       display: block;
-      background: #222;
-      touch-action: none;
-    }
-    /* Fixed scoreboard */
-    #scoreboard {
-      position: fixed;
-      top: 5px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10;
-      font-size: 1.2em;
-      background: rgba(0,0,0,0.5);
-      padding: 5px 10px;
-      border-radius: 5px;
-    }
-    /* Message overlay for notifications and start screen */
-    #message {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 20;
-      font-size: 2em;
-      padding: 10px 20px;
-      background: rgba(0, 0, 0, 0.7);
-      border-radius: 10px;
-      pointer-events: none;
-      opacity: 1; /* Start visible with "Tap to Start" */
-      transition: opacity 0.3s ease;
-    }
-    /* Shoot Button styling */
-    #shootBtn {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 30;
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      border: none;
-      background-color: rgba(255, 255, 255, 0.8);
-      font-size: 16px;
-      font-weight: bold;
-      color: #111;
-      outline: none;
-      cursor: pointer;
-      box-shadow: 0px 4px 6px rgba(0,0,0,0.3);
+      background-color: #000;
     }
   </style>
+  <!-- Matter.js physics engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <!-- poly-decomp for concave shapes -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/poly-decomp/0.3.0/decomp.min.js"></script>
+  <!-- opentype.js for loading font outlines -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
-  <div id="scoreboard">Score: 0 | High Score: 0 | Lives: 3</div>
-  <div id="message">Tap to Start</div>
-  <button id="shootBtn">SHOOT</button>
+  <canvas id="canvas"></canvas>
   <script>
-    const canvas = document.getElementById("gameCanvas");
-    const ctx = canvas.getContext("2d");
-
-    // Resize the canvas to full window size.
+    // --- Global aliases from Matter.js ---
+    const Engine = Matter.Engine,
+          World = Matter.World,
+          Bodies = Matter.Bodies,
+          Body = Matter.Body,
+          Composite = Matter.Composite,
+          Runner = Matter.Runner;
+    
+    // Create engine and world.
+    const engine = Engine.create();
+    // Set gravity (units are arbitrary; adjust as desired to “feel” like Earth).
+    engine.world.gravity.y = 1; // (You can experiment; our simulation units are in pixels.)
+    
+    // Get canvas and context.
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    
+    // Keep track of our letter bodies.
+    const letterBodies = [];
+    
+    // Boundaries (ground and walls) will be created and updated.
+    let boundaries = [];
+    
+    // Resize canvas to fill window.
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      if (player) {
-        player.y = canvas.height - 60;
-      }
+      // Recreate boundaries.
+      updateBoundaries();
     }
-    window.addEventListener("resize", resizeCanvas);
+    
+    window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
-
-    // ========= Game State Variables =========
-    let lastTime = 0;
-    let enemySpawnTimer = 0;
-    let lootSpawnTimer = 0;
-    let gameOver = false;
-    let gameStarted = false;
-
-    let score = 0;
-    let lives = 3;
-    let highScore = Number(localStorage.getItem("highScore")) || 0;
-
-    let shieldTimer = 0;
-    let doubleScoreTimer = 0;
-    let slowTimeTimer = 0;
-    let scoreMultiplier = 1;
-    let enemySpeedMultiplier = 1;
-
-    // ========= Player Object =========
-    const player = {
-      x: canvas.width / 2,
-      y: canvas.height - 60,
-      width: 40,
-      height: 40,
-      draw() {
-        ctx.save();
-        ctx.fillStyle = shieldTimer > 0 ? "#0ff" : "#0f0";
-        ctx.beginPath();
-        ctx.moveTo(this.x, this.y - this.height / 2);
-        ctx.lineTo(this.x - this.width / 2, this.y + this.height / 2);
-        ctx.lineTo(this.x + this.width / 2, this.y + this.height / 2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-    };
-
-    // ========= Arrays for Enemies, Loot Boxes, and Bullets =========
-    const enemies = [];
-    const lootBoxes = [];
-    const bullets = [];
-
-    // ========= Reward Options =========
-    const rewards = [
-      {
-        name: "Extra Points",
-        effect: function() {
-          score += 50;
-          displayMessage("+50 Points!");
-        }
-      },
-      {
-        name: "Shield",
-        effect: function() {
-          shieldTimer = 5000;
-          displayMessage("Shield Activated!");
-        }
-      },
-      {
-        name: "Double Score",
-        effect: function() {
-          scoreMultiplier = 2;
-          doubleScoreTimer = 10000;
-          displayMessage("Double Score!");
-        }
-      },
-      {
-        name: "Slow Time",
-        effect: function() {
-          enemySpeedMultiplier = 0.5;
-          slowTimeTimer = 5000;
-          displayMessage("Slow Time!");
-        }
-      },
-      {
-        name: "Extra Life",
-        effect: function() {
-          if (lives < 5) {
-            lives++;
-            displayMessage("Extra Life!");
-          } else {
-            displayMessage("Max Lives!");
+    
+    // Create (or update) boundaries as static bodies.
+    function updateBoundaries() {
+      // Remove previous boundaries.
+      boundaries.forEach(b => World.remove(engine.world, b));
+      boundaries = [];
+      
+      const thickness = 100;
+      // Floor
+      let floor = Bodies.rectangle(canvas.width / 2, canvas.height + thickness / 2, canvas.width * 2, thickness, { isStatic: true });
+      // Left wall
+      let leftWall = Bodies.rectangle(-thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
+      // Right wall
+      let rightWall = Bodies.rectangle(canvas.width + thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
+      boundaries.push(floor, leftWall, rightWall);
+      World.add(engine.world, boundaries);
+    }
+    
+    // --- Helper functions to convert an opentype.js Path to vertices ---
+    // Approximates quadratic and cubic curves by sampling points.
+    function pathToVertices(path, sampleSteps = 10) {
+      let vertices = [];
+      let currX = 0, currY = 0;
+      // We take only the first subpath (outer shape)
+      for (let cmd of path.commands) {
+        if (cmd.type === 'M') {
+          // Start a new subpath; if already started, break to use only outer outline.
+          if (vertices.length > 0) break;
+          currX = cmd.x;
+          currY = cmd.y;
+          vertices.push({ x: currX, y: currY });
+        } else if (cmd.type === 'L') {
+          currX = cmd.x;
+          currY = cmd.y;
+          vertices.push({ x: currX, y: currY });
+        } else if (cmd.type === 'Q') {
+          // Quadratic: from current point to (cmd.x, cmd.y) with control (cmd.x1, cmd.y1)
+          let cpX = cmd.x1, cpY = cmd.y1;
+          let endX = cmd.x, endY = cmd.y;
+          for (let t = 0; t <= 1; t += 1 / sampleSteps) {
+            let x = (1 - t) * (1 - t) * currX + 2 * (1 - t) * t * cpX + t * t * endX;
+            let y = (1 - t) * (1 - t) * currY + 2 * (1 - t) * t * cpY + t * t * endY;
+            vertices.push({ x, y });
           }
+          currX = endX;
+          currY = endY;
+        } else if (cmd.type === 'C') {
+          // Cubic: from current point to (cmd.x, cmd.y) with control points (cmd.x1, cmd.y1) and (cmd.x2, cmd.y2)
+          let cp1X = cmd.x1, cp1Y = cmd.y1;
+          let cp2X = cmd.x2, cp2Y = cmd.y2;
+          let endX = cmd.x, endY = cmd.y;
+          for (let t = 0; t <= 1; t += 1 / sampleSteps) {
+            let x = Math.pow(1 - t, 3) * currX +
+                    3 * Math.pow(1 - t, 2) * t * cp1X +
+                    3 * (1 - t) * t * t * cp2X +
+                    Math.pow(t, 3) * endX;
+            let y = Math.pow(1 - t, 3) * currY +
+                    3 * Math.pow(1 - t, 2) * t * cp1Y +
+                    3 * (1 - t) * t * t * cp2Y +
+                    Math.pow(t, 3) * endY;
+            vertices.push({ x, y });
+          }
+          currX = endX;
+          currY = endY;
         }
+        // 'Z' (closePath) is ignored since our vertices array should already form a loop.
       }
-    ];
-
-    // ========= Utility Functions =========
-    function rectsIntersect(a, b) {
-      return !(a.x > b.x + b.width ||
-               a.x + a.width < b.x ||
-               a.y > b.y + b.height ||
-               a.y + a.height < b.y);
+      return vertices;
     }
-
-    function displayMessage(text) {
-      const msgEl = document.getElementById("message");
-      msgEl.textContent = text;
-      msgEl.style.opacity = 1;
-      setTimeout(() => { msgEl.style.opacity = 0; }, 1500);
-    }
-
-    function updateScoreboard() {
-      document.getElementById("scoreboard").innerHTML =
-        "Score: " + Math.floor(score) +
-        " | High Score: " + Math.floor(highScore) +
-        " | Lives: " + lives;
-    }
-
-    // ========= Touch Controls for Moving the Ship =========
-    function handleTouch(evt) {
-      evt.preventDefault();
-      // If the game hasn't started, use the touch to start it.
-      if (!gameStarted) {
-        startGame();
-        return;
-      }
-      if (evt.touches.length > 0) {
-        const touch = evt.touches[0];
-        const rect = canvas.getBoundingClientRect();
-        const touchX = touch.clientX - rect.left;
-        player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, touchX));
-      }
-    }
-    canvas.addEventListener("touchstart", handleTouch, {passive: false});
-    canvas.addEventListener("touchmove", handleTouch, {passive: false});
-
-    // ========= Enemy and LootBox Constructors =========
-    function createEnemy() {
-      const size = 30;
-      const x = Math.random() * (canvas.width - size);
-      const y = -size;
-      const speed = 200 + Math.random() * 100;
-      enemies.push({ x, y, width: size, height: size, speed });
-    }
-
-    function createLootBox() {
-      const size = 25;
-      const x = Math.random() * (canvas.width - size);
-      const y = -size;
-      const speed = 150 + Math.random() * 50;
-      lootBoxes.push({ x, y, width: size, height: size, speed });
-    }
-
-    // ========= Bullet Constructor and Shooting =========
-    function shootBullet() {
-      const bulletWidth = 5;
-      const bulletHeight = 10;
-      const bulletSpeed = 500;
-      bullets.push({
-        x: player.x - bulletWidth / 2,
-        y: player.y - player.height / 2,
-        width: bulletWidth,
-        height: bulletHeight,
-        speed: bulletSpeed
+    
+    // Compute centroid of a set of points.
+    function computeCentroid(vertices) {
+      let sumX = 0, sumY = 0;
+      vertices.forEach(v => {
+        sumX += v.x;
+        sumY += v.y;
       });
+      return { x: sumX / vertices.length, y: sumY / vertices.length };
     }
-
-    document.getElementById("shootBtn").addEventListener("touchstart", (evt) => {
-      evt.preventDefault();
-      if (!gameOver && gameStarted) shootBullet();
-    }, {passive: false});
-    document.getElementById("shootBtn").addEventListener("click", (evt) => {
-      evt.preventDefault();
-      if (!gameOver && gameStarted) shootBullet();
+    
+    // --- Main rendering and simulation ---
+    
+    // We will run our own render loop (instead of Matter.Render) so that we can draw the letter shapes.
+    function render() {
+      // Clear canvas
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      // Optionally, fill background (dark)
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // For each letter body, draw its shape using its stored Path2D.
+      for (let body of letterBodies) {
+        if (!body.customPath) continue;
+        context.save();
+        // Translate to the body's position and apply rotation.
+        context.translate(body.position.x, body.position.y);
+        context.rotate(body.angle);
+        // Offset by the stored centroid so the Path2D is centered.
+        context.translate(-body.customCentroid.x, -body.customCentroid.y);
+        context.fillStyle = "white";
+        context.fill(body.customPath);
+        context.restore();
+      }
+    }
+    
+    // Main loop: update physics and then render.
+    function animate(time) {
+      Engine.update(engine, 16.66); // fixed time step (approx 60 fps)
+      render();
+      requestAnimationFrame(animate);
+    }
+    
+    requestAnimationFrame(animate);
+    
+    // --- Load a font via opentype.js ---
+    // (Using Roboto Regular from Google Fonts on GitHub – ensure CORS is enabled.)
+    const fontURL = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf";
+    let loadedFont = null;
+    
+    opentype.load(fontURL, function(err, font) {
+      if (err) {
+        console.error('Could not load font: ' + err);
+      } else {
+        loadedFont = font;
+        // Start spawning letters once the font is loaded.
+        setInterval(spawnLetter, 1000); // spawn a letter every second
+      }
     });
-
-    // ========= Game Loop =========
-    function gameLoop(timestamp) {
-      if (!gameStarted) return; // Only run when game is active.
-      if (!lastTime) lastTime = timestamp;
-      const deltaTime = timestamp - lastTime;
-      lastTime = timestamp;
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Gradually increase score.
-      score += (deltaTime / 100) * scoreMultiplier;
-
-      // Update power-up timers.
-      if (shieldTimer > 0) { shieldTimer -= deltaTime; if (shieldTimer < 0) shieldTimer = 0; }
-      if (doubleScoreTimer > 0) { 
-        doubleScoreTimer -= deltaTime; 
-        if (doubleScoreTimer <= 0) { doubleScoreTimer = 0; scoreMultiplier = 1; }
-      }
-      if (slowTimeTimer > 0) { 
-        slowTimeTimer -= deltaTime; 
-        if (slowTimeTimer <= 0) { slowTimeTimer = 0; enemySpeedMultiplier = 1; }
-      }
-
-      // Spawn enemies.
-      enemySpawnTimer += deltaTime;
-      if (enemySpawnTimer > 800 + Math.random() * 200) {
-        createEnemy();
-        enemySpawnTimer = 0;
-      }
-      // Spawn loot boxes.
-      lootSpawnTimer += deltaTime;
-      if (lootSpawnTimer > 6000 + Math.random() * 2000) {
-        createLootBox();
-        lootSpawnTimer = 0;
-      }
-
-      // Update and draw enemies.
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        const enemy = enemies[i];
-        enemy.y += enemy.speed * enemySpeedMultiplier * (deltaTime / 1000);
-        ctx.fillStyle = "#f00";
-        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
-        if (enemy.y > canvas.height) {
-          enemies.splice(i, 1);
-          continue;
-        }
-        if (rectsIntersect(enemy, {
-          x: player.x - player.width / 2,
-          y: player.y - player.height / 2,
-          width: player.width,
-          height: player.height
-        })) {
-          if (shieldTimer > 0) {
-            shieldTimer = 0;
-            enemies.splice(i, 1);
-            displayMessage("Shield saved you!");
-          } else {
-            lives--;
-            enemies.splice(i, 1);
-            displayMessage("Ouch!");
-            if (lives <= 0) { endGame(); }
-          }
-        }
-      }
-
-      // Update and draw loot boxes.
-      for (let i = lootBoxes.length - 1; i >= 0; i--) {
-        const loot = lootBoxes[i];
-        loot.y += loot.speed * (deltaTime / 1000);
-        ctx.fillStyle = "#00f";
-        ctx.fillRect(loot.x, loot.y, loot.width, loot.height);
-        if (loot.y > canvas.height) {
-          lootBoxes.splice(i, 1);
-          continue;
-        }
-        if (rectsIntersect(loot, {
-          x: player.x - player.width / 2,
-          y: player.y - player.height / 2,
-          width: player.width,
-          height: player.height
-        })) {
-          const reward = rewards[Math.floor(Math.random() * rewards.length)];
-          reward.effect();
-          lootBoxes.splice(i, 1);
-        }
-      }
-
-      // Update and draw bullets.
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const bullet = bullets[i];
-        bullet.y -= bullet.speed * (deltaTime / 1000);
-        ctx.fillStyle = "#ff0";
-        ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
-        if (bullet.y + bullet.height < 0) {
-          bullets.splice(i, 1);
-          continue;
-        }
-        for (let j = enemies.length - 1; j >= 0; j--) {
-          if (rectsIntersect(bullet, enemies[j])) {
-            enemies.splice(j, 1);
-            bullets.splice(i, 1);
-            score += 100;
-            displayMessage("+100!");
-            break;
-          }
-        }
-      }
-
-      // Draw the player ship.
-      player.draw();
-
-      // Update high score if needed.
-      if (score > highScore) {
-        highScore = score;
-        localStorage.setItem("highScore", Math.floor(highScore));
-      }
-      updateScoreboard();
-
-      if (gameOver) {
-        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 36px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
-        ctx.font = "24px sans-serif";
-        ctx.fillText("Tap to Restart", canvas.width / 2, canvas.height / 2 + 20);
+    
+    // --- Spawn a random letter at the top ---
+    function spawnLetter() {
+      if (!loadedFont) return;
+      // Choose a random letter (A-Z)
+      const charCode = Math.floor(Math.random() * 26) + 65;
+      const letter = String.fromCharCode(charCode);
+      // Choose a random font size (in pixels)
+      const fontSize = Math.random() * 60 + 20; // between 20 and 80
+      
+      // Create an opentype.js Path for the letter.
+      // First get a path at (0,0); later we will compute its centroid.
+      let path = loadedFont.getPath(letter, 0, 0, fontSize);
+      // Convert the path to vertices (sample the outer subpath).
+      let verts = pathToVertices(path, 10);
+      if (verts.length < 3) return; // not enough points
+      
+      // Compute the centroid of the vertices.
+      let centroid = computeCentroid(verts);
+      // Adjust vertices to be centered at (0,0)
+      let adjustedVerts = verts.map(v => ({ x: v.x - centroid.x, y: v.y - centroid.y }));
+      
+      // Create a Matter body from these vertices.
+      // Choose a random x along the top.
+      const spawnX = Math.random() * (canvas.width - fontSize) + fontSize/2;
+      // Start above the visible screen.
+      const spawnY = -fontSize;
+      
+      // Options: set frictionAir high to simulate water-like damping.
+      const options = {
+        frictionAir: 0.05,
+        restitution: 0.2,
+        density: 1
+      };
+      
+      // Matter.Bodies.fromVertices expects vertices in an array.
+      let body;
+      try {
+        body = Bodies.fromVertices(spawnX, spawnY, [adjustedVerts], options, true);
+      } catch (e) {
+        console.error("Failed to create body for letter", letter, e);
         return;
       }
-
-      requestAnimationFrame(gameLoop);
+      
+      if (!body) return;
+      
+      // Store additional custom properties for rendering:
+      // Create a Path2D object from the letter's outline.
+      // To have the path centered, we generate a new path at (-centroid.x, -centroid.y).
+      let centeredPath = loadedFont.getPath(letter, -centroid.x, -centroid.y, fontSize);
+      let pathData = centeredPath.toPathData();
+      body.customPath = new Path2D(pathData);
+      body.customCentroid = centroid; // used to offset drawing
+      
+      // Optionally store the letter (if you want to change color or for debugging)
+      body.letter = letter;
+      
+      // Add to our world and our array.
+      World.add(engine.world, body);
+      letterBodies.push(body);
     }
-
-    // ========= End and Restart Game =========
-    function endGame() {
-      gameOver = true;
-      gameStarted = false;
-      displayMessage("Game Over!");
-    }
-
-    function restartGame() {
-      score = 0;
-      lives = 3;
-      shieldTimer = 0;
-      doubleScoreTimer = 0;
-      slowTimeTimer = 0;
-      scoreMultiplier = 1;
-      enemySpeedMultiplier = 1;
-      enemies.length = 0;
-      lootBoxes.length = 0;
-      bullets.length = 0;
-      enemySpawnTimer = 0;
-      lootSpawnTimer = 0;
-      gameOver = false;
-      lastTime = 0;
-      player.x = canvas.width / 2;
-      player.y = canvas.height - 60;
-      startGame();
-    }
-
-    // Start the game upon user interaction.
-    function startGame() {
-      if (!gameStarted) {
-        gameStarted = true;
-        document.getElementById("message").style.opacity = 0;
-        lastTime = 0;
-        requestAnimationFrame(gameLoop);
-      }
-    }
-
-    // If user taps the canvas when game is not running or game is over, start/restart.
-    canvas.addEventListener("touchend", () => {
-      if (!gameStarted) startGame();
-      if (gameOver) restartGame();
-    });
-    canvas.addEventListener("mousedown", () => {
-      if (!gameStarted) startGame();
-      if (gameOver) restartGame();
-    });
   </script>
 </body>
 </html>
