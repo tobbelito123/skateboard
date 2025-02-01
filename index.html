@@ -15,14 +15,12 @@
       background: #111;
       color: #fff;
       font-family: sans-serif;
-      /* Disable default touch actions */
-      touch-action: none;
+      touch-action: none; /* Disable default gestures */
     }
     /* Fullscreen canvas */
     #gameCanvas {
       display: block;
       background: #222;
-      /* Disable default touch actions on canvas too */
       touch-action: none;
     }
     /* Fixed scoreboard */
@@ -37,7 +35,7 @@
       padding: 5px 10px;
       border-radius: 5px;
     }
-    /* Message overlay */
+    /* Message overlay for notifications and start screen */
     #message {
       position: fixed;
       top: 50%;
@@ -49,7 +47,7 @@
       background: rgba(0, 0, 0, 0.7);
       border-radius: 10px;
       pointer-events: none;
-      opacity: 0;
+      opacity: 1; /* Start visible with "Tap to Start" */
       transition: opacity 0.3s ease;
     }
     /* Shoot Button styling */
@@ -75,14 +73,13 @@
 <body>
   <canvas id="gameCanvas"></canvas>
   <div id="scoreboard">Score: 0 | High Score: 0 | Lives: 3</div>
-  <div id="message"></div>
+  <div id="message">Tap to Start</div>
   <button id="shootBtn">SHOOT</button>
   <script>
-    // ========= Global Variables and Canvas Setup =========
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
 
-    // Resize canvas to full window size
+    // Resize the canvas to full window size.
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -98,13 +95,12 @@
     let enemySpawnTimer = 0;
     let lootSpawnTimer = 0;
     let gameOver = false;
+    let gameStarted = false;
 
-    // Score and lives
     let score = 0;
     let lives = 3;
     let highScore = Number(localStorage.getItem("highScore")) || 0;
 
-    // Power-up timers (in ms)
     let shieldTimer = 0;
     let doubleScoreTimer = 0;
     let slowTimeTimer = 0;
@@ -135,7 +131,7 @@
     const lootBoxes = [];
     const bullets = [];
 
-    // ========= Reward Options for Loot Boxes =========
+    // ========= Reward Options =========
     const rewards = [
       {
         name: "Extra Points",
@@ -205,15 +201,15 @@
     // ========= Touch Controls for Moving the Ship =========
     function handleTouch(evt) {
       evt.preventDefault();
+      // If the game hasn't started, use the touch to start it.
+      if (!gameStarted) {
+        startGame();
+        return;
+      }
       if (evt.touches.length > 0) {
         const touch = evt.touches[0];
         const rect = canvas.getBoundingClientRect();
         const touchX = touch.clientX - rect.left;
-        if (gameOver) {
-          restartGame();
-          return;
-        }
-        // Clamp player's position within screen bounds.
         player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, touchX));
       }
     }
@@ -237,12 +233,11 @@
       lootBoxes.push({ x, y, width: size, height: size, speed });
     }
 
-    // ========= Bullet Constructor and Shooting Function =========
+    // ========= Bullet Constructor and Shooting =========
     function shootBullet() {
-      // Create a bullet starting from the player's top-center.
       const bulletWidth = 5;
       const bulletHeight = 10;
-      const bulletSpeed = 500; // upward speed in pixels per second
+      const bulletSpeed = 500;
       bullets.push({
         x: player.x - bulletWidth / 2,
         y: player.y - player.height / 2,
@@ -252,25 +247,25 @@
       });
     }
 
-    // Attach event to the shoot button.
     document.getElementById("shootBtn").addEventListener("touchstart", (evt) => {
       evt.preventDefault();
-      if (!gameOver) shootBullet();
+      if (!gameOver && gameStarted) shootBullet();
     }, {passive: false});
     document.getElementById("shootBtn").addEventListener("click", (evt) => {
       evt.preventDefault();
-      if (!gameOver) shootBullet();
+      if (!gameOver && gameStarted) shootBullet();
     });
 
     // ========= Game Loop =========
     function gameLoop(timestamp) {
+      if (!gameStarted) return; // Only run when game is active.
       if (!lastTime) lastTime = timestamp;
       const deltaTime = timestamp - lastTime;
       lastTime = timestamp;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Increase score gradually with multiplier.
+      // Gradually increase score.
       score += (deltaTime / 100) * scoreMultiplier;
 
       // Update power-up timers.
@@ -307,7 +302,6 @@
           enemies.splice(i, 1);
           continue;
         }
-        // Check collision with player.
         if (rectsIntersect(enemy, {
           x: player.x - player.width / 2,
           y: player.y - player.height / 2,
@@ -337,7 +331,6 @@
           lootBoxes.splice(i, 1);
           continue;
         }
-        // Check collision with player.
         if (rectsIntersect(loot, {
           x: player.x - player.width / 2,
           y: player.y - player.height / 2,
@@ -360,10 +353,8 @@
           bullets.splice(i, 1);
           continue;
         }
-        // Check collision with enemies.
         for (let j = enemies.length - 1; j >= 0; j--) {
           if (rectsIntersect(bullet, enemies[j])) {
-            // Enemy hit by bullet.
             enemies.splice(j, 1);
             bullets.splice(i, 1);
             score += 100;
@@ -376,7 +367,7 @@
       // Draw the player ship.
       player.draw();
 
-      // Update scoreboard and high score.
+      // Update high score if needed.
       if (score > highScore) {
         highScore = score;
         localStorage.setItem("highScore", Math.floor(highScore));
@@ -401,6 +392,7 @@
     // ========= End and Restart Game =========
     function endGame() {
       gameOver = true;
+      gameStarted = false;
       displayMessage("Game Over!");
     }
 
@@ -421,13 +413,28 @@
       lastTime = 0;
       player.x = canvas.width / 2;
       player.y = canvas.height - 60;
-      requestAnimationFrame(gameLoop);
+      startGame();
     }
 
-    // ========= Start the Game =========
-    requestAnimationFrame(gameLoop);
-    canvas.addEventListener("touchend", () => { if (gameOver) restartGame(); });
-    canvas.addEventListener("mousedown", () => { if (gameOver) restartGame(); });
+    // Start the game upon user interaction.
+    function startGame() {
+      if (!gameStarted) {
+        gameStarted = true;
+        document.getElementById("message").style.opacity = 0;
+        lastTime = 0;
+        requestAnimationFrame(gameLoop);
+      }
+    }
+
+    // If user taps the canvas when game is not running or game is over, start/restart.
+    canvas.addEventListener("touchend", () => {
+      if (!gameStarted) startGame();
+      if (gameOver) restartGame();
+    });
+    canvas.addEventListener("mousedown", () => {
+      if (!gameStarted) startGame();
+      if (gameOver) restartGame();
+    });
   </script>
 </body>
 </html>
