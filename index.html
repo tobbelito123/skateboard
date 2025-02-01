@@ -1,292 +1,404 @@
 <!DOCTYPE html>
-<html lang="sv">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Skateboard Shooter</title>
-  <!-- Laddar Pixi.js via CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6/dist/browser/pixi.min.js"></script>
-
+  <meta charset="UTF-8">
+  <!-- Mobile-optimized viewport -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mobile Loot & Dodge</title>
   <style>
+    /* Remove default margins and disable text selection */
     html, body {
       margin: 0;
       padding: 0;
-      background: #333;
-      overflow: hidden; /* Dölj scrollbars */
-    }
-    #game-container {
-      /* Pixi kommer att injicera sin canvas här */
-      width: 100vw;
-      height: 100vh;
-    }
-    .hud {
-      position: absolute;
-      top: 10px;
-      left: 10px;
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      background: #111;
       color: #fff;
       font-family: sans-serif;
-      font-size: 20px;
+    }
+    /* Fullscreen canvas */
+    #gameCanvas {
+      display: block;
+      background: #222;
+    }
+    /* Fixed scoreboard */
+    #scoreboard {
+      position: fixed;
+      top: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      font-size: 1.2em;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 5px;
+    }
+    /* Message overlay (for rewards, game over, etc.) */
+    #message {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      font-size: 2em;
+      padding: 10px 20px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 10px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
     }
   </style>
 </head>
 <body>
-  <div id="game-container"></div>
-  <div class="hud" id="hp">HP: 100</div>
-  
+  <canvas id="gameCanvas"></canvas>
+  <div id="scoreboard">Score: 0 | High Score: 0 | Lives: 3</div>
+  <div id="message"></div>
   <script>
-    // === Skapa Pixi-applikation ===
-    const app = new PIXI.Application({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      backgroundColor: 0x1099bb,
-      antialias: true,
-    });
-    document.getElementById('game-container').appendChild(app.view);
+    // ========= Global Variables and Canvas Setup =========
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
 
-    // === Konstanter för spelet ===
-    const PLAYER_SPEED = 5;         // Hastighet när spelaren rör sig med piltangenter
-    const BULLET_SPEED = 10;        // Hastighet för kulor
-    const ENEMY_SPEED = 4;          // Hastighet för fiender
-    const ENEMY_SPAWN_INTERVAL = 60; // Bildrutor mellan fiendespawns
-    const PLAYER_MAX_HP = 100;
-
-    // === Variabler och containers ===
-    let keys = {};                  // Tangenttryck
-    let playerHP = PLAYER_MAX_HP;
-    let enemySpawnCounter = 0;      // Räknare för när vi ska spawna fiender
-    
-    // Sprites/Containers
-    const bullets = [];             // Array för spelarens kulor
-    const enemyBullets = [];        // Array för fiendens kulor
-    const enemies = [];             // Array för fiender
-    
-    // === Skapa en bakgrund som "scrollar" ===
-    // Vi kan använda en TilingSprite för att simulera rörelse.
-    const textureBG = PIXI.Texture.WHITE; // En vit ruta
-    const background = new PIXI.TilingSprite(
-      textureBG,
-      app.screen.width,
-      app.screen.height
-    );
-    background.tint = 0x333333; // Mörkare färg
-    app.stage.addChild(background);
-
-    // === Spelar-sprite (en enkel rektangel i Pixi) ===
-    const player = new PIXI.Graphics();
-    player.beginFill(0x00ff00);
-    player.drawRect(-25, -50, 50, 100); // En rektangel, centrerad
-    player.endFill();
-    player.x = app.screen.width / 2;
-    player.y = app.screen.height - 150; // Längre ner på skärmen
-    app.stage.addChild(player);
-
-    // === Huvud-loop (ticker) i Pixi ===
-    app.ticker.add((delta) => {
-      // 1. Uppdatera bakgrundens "tiles" för att få scroll-effekt
-      background.tilePosition.y += 2;
-
-      // 2. Läs av tangenttryck och styr spelaren
-      handlePlayerMovement();
-
-      // 3. Uppdatera alla kulor (både spelarens och fiendernas)
-      updateBullets();
-
-      // 4. Spawna fiender med ett intervall
-      spawnEnemies();
-
-      // 5. Uppdatera fiender och kolla kollisioner
-      updateEnemies();
-
-      // 6. Uppdatera HUD (HP)
-      document.getElementById('hp').innerText = `HP: ${playerHP}`;
-
-      // 7. Kolla om spelaren dött
-      if (playerHP <= 0) {
-        gameOver();
+    // Resize canvas to full window size
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // Keep the player on screen if already defined.
+      if (player) {
+        player.y = canvas.height - 60;
       }
-    });
-
-    // === Hantera tangenttryckning (piltangenter & space) ===
-    window.addEventListener("keydown", (e) => {
-      keys[e.code] = true;
-      // Om space trycks, skjut kula
-      if (e.code === "Space") {
-        shootBullet();
-      }
-    });
-    window.addEventListener("keyup", (e) => {
-      keys[e.code] = false;
-    });
-
-    // === Flytta spelaren baserat på vilka tangenter som är nedtryckta ===
-    function handlePlayerMovement() {
-      // Vänster/Höger
-      if (keys["ArrowLeft"]) {
-        player.x -= PLAYER_SPEED;
-      } else if (keys["ArrowRight"]) {
-        player.x += PLAYER_SPEED;
-      }
-      // Upp/Ner
-      if (keys["ArrowUp"]) {
-        player.y -= PLAYER_SPEED;
-      } else if (keys["ArrowDown"]) {
-        player.y += PLAYER_SPEED;
-      }
-      // Begränsa spelaren inom skärmens gränser
-      if (player.x < 0) player.x = 0;
-      if (player.x > app.screen.width) player.x = app.screen.width;
-      if (player.y < 0) player.y = 0;
-      if (player.y > app.screen.height) player.y = app.screen.height;
     }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
 
-    // === Spelaren skjuter en kula ===
-    function shootBullet() {
-      const bullet = new PIXI.Graphics();
-      bullet.beginFill(0xffff00);
-      bullet.drawCircle(0, 0, 5);
-      bullet.endFill();
-      bullet.x = player.x;
-      bullet.y = player.y - 50; // Precis framför spelaren
-      app.stage.addChild(bullet);
-      bullets.push(bullet);
-    }
+    // ========= Game State Variables =========
+    let lastTime = 0;
+    let enemySpawnTimer = 0;
+    let lootSpawnTimer = 0;
+    let gameOver = false;
 
-    // === Uppdatera position för kulor och ta bort dem om de är utanför skärmen ===
-    function updateBullets() {
-      // Spelarens kulor
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        bullets[i].y -= BULLET_SPEED;
-        if (bullets[i].y < 0) {
-          app.stage.removeChild(bullets[i]);
-          bullets.splice(i, 1);
+    // Score and lives
+    let score = 0;
+    let lives = 3;
+    let highScore = Number(localStorage.getItem("highScore")) || 0;
+
+    // Power-up timers (in milliseconds)
+    let shieldTimer = 0;      // When > 0, player is immune to enemy collisions
+    let doubleScoreTimer = 0; // When > 0, scoring is doubled
+    let slowTimeTimer = 0;    // When > 0, enemy speeds are reduced
+    let scoreMultiplier = 1;
+    let enemySpeedMultiplier = 1;
+
+    // ========= Player Object =========
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height - 60,
+      width: 40,
+      height: 40,
+      // Draw the ship as a triangle
+      draw() {
+        ctx.save();
+        ctx.fillStyle = shieldTimer > 0 ? "#0ff" : "#0f0";
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y - this.height / 2);
+        ctx.lineTo(this.x - this.width / 2, this.y + this.height / 2);
+        ctx.lineTo(this.x + this.width / 2, this.y + this.height / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    };
+
+    // ========= Arrays for Enemies and Loot Boxes =========
+    const enemies = [];
+    const lootBoxes = [];
+
+    // ========= Reward Options for Loot Boxes =========
+    const rewards = [
+      {
+        name: "Extra Points",
+        effect: function() {
+          score += 50;
+          displayMessage("+50 Points!");
         }
-      }
-      // Fienders kulor
-      for (let i = enemyBullets.length - 1; i >= 0; i--) {
-        enemyBullets[i].y += BULLET_SPEED * 0.8; // Fiendens kulor kan vara lite långsammare
-        // Om fiendekulan träffar spelaren
-        if (hitTest(enemyBullets[i], player)) {
-          playerHP -= 10;
-          removeEnemyBullet(i);
-          continue; // Hoppa över resten av loopen
+      },
+      {
+        name: "Shield",
+        effect: function() {
+          shieldTimer = 5000;
+          displayMessage("Shield Activated!");
         }
-        // Ta bort kula om den är utanför skärmen
-        if (enemyBullets[i].y > app.screen.height) {
-          removeEnemyBullet(i);
+      },
+      {
+        name: "Double Score",
+        effect: function() {
+          scoreMultiplier = 2;
+          doubleScoreTimer = 10000;
+          displayMessage("Double Score!");
         }
-      }
-    }
-
-    // === Hjälpfunktion för att ta bort fiende-kula ===
-    function removeEnemyBullet(index) {
-      app.stage.removeChild(enemyBullets[index]);
-      enemyBullets.splice(index, 1);
-    }
-
-    // === Spawna fiender med ett intervall ===
-    function spawnEnemies() {
-      enemySpawnCounter++;
-      if (enemySpawnCounter > ENEMY_SPAWN_INTERVAL) {
-        enemySpawnCounter = 0;
-        createEnemy();
-      }
-    }
-
-    // === Skapa en fiende (en enkel röd rektangel) ===
-    function createEnemy() {
-      const enemy = new PIXI.Graphics();
-      enemy.beginFill(0xff0000);
-      enemy.drawRect(-25, -50, 50, 100);
-      enemy.endFill();
-      enemy.x = Math.random() * (app.screen.width - 50) + 25;
-      enemy.y = -50; // Börja strax ovanför skärmen
-      enemy.hp = 20; // Fiende-HP
-      app.stage.addChild(enemy);
-      enemies.push(enemy);
-    }
-
-    // === Uppdatera fiender, kolla kollisioner, låt fiender skjuta ===
-    function updateEnemies() {
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        const enemy = enemies[i];
-        enemy.y += ENEMY_SPEED;
-
-        // Låt fienden skjuta slumpmässigt
-        if (Math.random() < 0.01) {
-          shootEnemyBullet(enemy);
+      },
+      {
+        name: "Slow Time",
+        effect: function() {
+          enemySpeedMultiplier = 0.5;
+          slowTimeTimer = 5000;
+          displayMessage("Slow Time!");
         }
-
-        // Kolla om fienden krockar med en av spelarens kulor
-        for (let j = bullets.length - 1; j >= 0; j--) {
-          if (hitTest(bullets[j], enemy)) {
-            enemy.hp -= 10; // Fienden tar skada
-            // Ta bort kulan
-            app.stage.removeChild(bullets[j]);
-            bullets.splice(j, 1);
-            // Om fienden dör
-            if (enemy.hp <= 0) {
-              app.stage.removeChild(enemy);
-              enemies.splice(i, 1);
-            }
-            break; // Avbryt loopen för kulorna
+      },
+      {
+        name: "Extra Life",
+        effect: function() {
+          if (lives < 5) {
+            lives++;
+            displayMessage("Extra Life!");
+          } else {
+            displayMessage("Max Lives!");
           }
         }
+      }
+    ];
 
-        // Om fienden går utanför skärmen, ta bort den
-        if (enemy.y > app.screen.height + 100) {
-          app.stage.removeChild(enemy);
-          enemies.splice(i, 1);
+    // ========= Utility Functions =========
+    // Check for rectangle collision
+    function rectsIntersect(a, b) {
+      return !(a.x > b.x + b.width ||
+               a.x + a.width < b.x ||
+               a.y > b.y + b.height ||
+               a.y + a.height < b.y);
+    }
+
+    // Show a temporary message (reward, game over, etc.)
+    function displayMessage(text) {
+      const msgEl = document.getElementById("message");
+      msgEl.textContent = text;
+      msgEl.style.opacity = 1;
+      setTimeout(() => {
+        msgEl.style.opacity = 0;
+      }, 1500);
+    }
+
+    // Update the scoreboard display
+    function updateScoreboard() {
+      document.getElementById("scoreboard").innerHTML =
+        "Score: " + Math.floor(score) +
+        " | High Score: " + Math.floor(highScore) +
+        " | Lives: " + lives;
+    }
+
+    // ========= Touch Controls =========
+    // On mobile, tapping or dragging sets the player’s x position.
+    function handleTouch(evt) {
+      evt.preventDefault();
+      const touch = evt.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const touchX = touch.clientX - rect.left;
+      // If game over, tapping anywhere restarts the game.
+      if (gameOver) {
+        restartGame();
+        return;
+      }
+      // Clamp the new position so the ship stays fully on-screen.
+      player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, touchX));
+    }
+    canvas.addEventListener("touchstart", handleTouch, {passive: false});
+    canvas.addEventListener("touchmove", handleTouch, {passive: false});
+
+    // ========= Enemy and LootBox Constructors =========
+    function createEnemy() {
+      const size = 30;
+      const x = Math.random() * (canvas.width - size);
+      const y = -size;
+      // Base speed between 200 and 300 pixels per second (will be scaled by enemySpeedMultiplier)
+      const speed = 200 + Math.random() * 100;
+      enemies.push({ x, y, width: size, height: size, speed });
+    }
+
+    function createLootBox() {
+      const size = 25;
+      const x = Math.random() * (canvas.width - size);
+      const y = -size;
+      // Loot boxes fall at a similar speed as enemies
+      const speed = 150 + Math.random() * 50;
+      lootBoxes.push({ x, y, width: size, height: size, speed });
+    }
+
+    // ========= Game Loop =========
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Increase score gradually (and apply multiplier)
+      score += (deltaTime / 100) * scoreMultiplier;
+
+      // Update power-up timers
+      if (shieldTimer > 0) {
+        shieldTimer -= deltaTime;
+        if (shieldTimer < 0) shieldTimer = 0;
+      }
+      if (doubleScoreTimer > 0) {
+        doubleScoreTimer -= deltaTime;
+        if (doubleScoreTimer <= 0) {
+          doubleScoreTimer = 0;
+          scoreMultiplier = 1;
         }
       }
+      if (slowTimeTimer > 0) {
+        slowTimeTimer -= deltaTime;
+        if (slowTimeTimer <= 0) {
+          slowTimeTimer = 0;
+          enemySpeedMultiplier = 1;
+        }
+      }
+
+      // Spawn enemies every ~800ms (slightly randomized)
+      enemySpawnTimer += deltaTime;
+      if (enemySpawnTimer > 800 + Math.random() * 200) {
+        createEnemy();
+        enemySpawnTimer = 0;
+      }
+      // Spawn loot boxes every ~6 seconds
+      lootSpawnTimer += deltaTime;
+      if (lootSpawnTimer > 6000 + Math.random() * 2000) {
+        createLootBox();
+        lootSpawnTimer = 0;
+      }
+
+      // Update and draw enemies
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        enemy.y += enemy.speed * enemySpeedMultiplier * (deltaTime / 1000);
+        // Draw enemy as a red square
+        ctx.fillStyle = "#f00";
+        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+        // Remove enemy if it goes off-screen
+        if (enemy.y > canvas.height) {
+          enemies.splice(i, 1);
+          continue;
+        }
+        // Check collision with player
+        if (rectsIntersect(enemy, {
+          x: player.x - player.width / 2,
+          y: player.y - player.height / 2,
+          width: player.width,
+          height: player.height
+        })) {
+          if (shieldTimer > 0) {
+            // Consume the shield and remove the enemy
+            shieldTimer = 0;
+            enemies.splice(i, 1);
+            displayMessage("Shield saved you!");
+          } else {
+            // Lose a life and remove the enemy
+            lives--;
+            enemies.splice(i, 1);
+            displayMessage("Ouch!");
+            if (lives <= 0) {
+              endGame();
+            }
+          }
+        }
+      }
+
+      // Update and draw loot boxes
+      for (let i = lootBoxes.length - 1; i >= 0; i--) {
+        const loot = lootBoxes[i];
+        loot.y += loot.speed * (deltaTime / 1000);
+        // Draw loot box as a blue square
+        ctx.fillStyle = "#00f";
+        ctx.fillRect(loot.x, loot.y, loot.width, loot.height);
+        // Remove if off-screen
+        if (loot.y > canvas.height) {
+          lootBoxes.splice(i, 1);
+          continue;
+        }
+        // Check collision with player
+        if (rectsIntersect(loot, {
+          x: player.x - player.width / 2,
+          y: player.y - player.height / 2,
+          width: player.width,
+          height: player.height
+        })) {
+          // Choose a random reward
+          const reward = rewards[Math.floor(Math.random() * rewards.length)];
+          reward.effect();
+          lootBoxes.splice(i, 1);
+        }
+      }
+
+      // Draw the player ship
+      player.draw();
+
+      // Update scoreboard and high score
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem("highScore", Math.floor(highScore));
+      }
+      updateScoreboard();
+
+      // If game over, draw overlay text
+      if (gameOver) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 36px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.font = "24px sans-serif";
+        ctx.fillText("Tap to Restart", canvas.width / 2, canvas.height / 2 + 20);
+        return; // Stop updating game objects
+      }
+
+      // Continue game loop
+      requestAnimationFrame(gameLoop);
     }
 
-    // === Fienden skjuter en kula ===
-    function shootEnemyBullet(enemy) {
-      const bullet = new PIXI.Graphics();
-      bullet.beginFill(0xff9900);
-      bullet.drawCircle(0, 0, 5);
-      bullet.endFill();
-      bullet.x = enemy.x;
-      bullet.y = enemy.y + 50; // Nedanför fienden
-      app.stage.addChild(bullet);
-      enemyBullets.push(bullet);
+    // ========= End and Restart Game =========
+    function endGame() {
+      gameOver = true;
+      displayMessage("Game Over!");
     }
 
-    // === En enkel AABB-kollision (rektangel-approx) för Pixi Graphics ===
-    function hitTest(a, b) {
-      // Hämta bounds
-      const ab = a.getBounds();
-      const bb = b.getBounds();
-      return ab.x + ab.width > bb.x &&
-             ab.x < bb.x + bb.width &&
-             ab.y + ab.height > bb.y &&
-             ab.y < bb.y + bb.height;
+    function restartGame() {
+      // Reset game state variables
+      score = 0;
+      lives = 3;
+      shieldTimer = 0;
+      doubleScoreTimer = 0;
+      slowTimeTimer = 0;
+      scoreMultiplier = 1;
+      enemySpeedMultiplier = 1;
+      enemies.length = 0;
+      lootBoxes.length = 0;
+      enemySpawnTimer = 0;
+      lootSpawnTimer = 0;
+      gameOver = false;
+      lastTime = 0;
+      // Center the player horizontally and near the bottom
+      player.x = canvas.width / 2;
+      player.y = canvas.height - 60;
+      requestAnimationFrame(gameLoop);
     }
 
-    // === Hantera Game Over ===
-    function gameOver() {
-      // Pausa spelet genom att stoppa ticker
-      app.ticker.stop();
+    // ========= Start the Game =========
+    // Start the game loop
+    requestAnimationFrame(gameLoop);
 
-      // Visa en enkel "Game Over"-text
-      const style = new PIXI.TextStyle({
-        fill: "#ff0000",
-        fontSize: 64,
-        fontWeight: "bold"
-      });
-      const gameOverText = new PIXI.Text("GAME OVER", style);
-      gameOverText.anchor.set(0.5);
-      gameOverText.x = app.screen.width / 2;
-      gameOverText.y = app.screen.height / 2;
-      app.stage.addChild(gameOverText);
-    }
-
-    // === Gör att spelet skalar om ifall fönstret ändras ===
-    window.addEventListener('resize', () => {
-      app.renderer.resize(window.innerWidth, window.innerHeight);
-      background.width = app.screen.width;
-      background.height = app.screen.height;
+    // Also allow a tap (mousedown for desktops or touchend) to restart when game over.
+    canvas.addEventListener("touchend", (evt) => {
+      if (gameOver) {
+        restartGame();
+      }
     });
-
+    canvas.addEventListener("mousedown", (evt) => {
+      if (gameOver) {
+        restartGame();
+      }
+    });
   </script>
 </body>
 </html>
