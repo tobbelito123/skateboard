@@ -16,77 +16,69 @@
       background-color: #000;
     }
   </style>
-  <!-- Matter.js physics engine -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
-  <!-- poly-decomp for concave shapes -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/poly-decomp/0.3.0/decomp.min.js"></script>
-  <!-- opentype.js for loading font outlines -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+  <!-- Load Matter.js from unpkg -->
+  <script src="https://unpkg.com/matter-js@0.19.0/build/matter.min.js"></script>
+  <!-- Load poly-decomp from unpkg -->
+  <script src="https://unpkg.com/poly-decomp@0.3.0/build/decomp.min.js"></script>
+  <!-- Load opentype.js from unpkg -->
+  <script src="https://unpkg.com/opentype.js@1.3.4/dist/opentype.min.js"></script>
 </head>
 <body>
   <canvas id="canvas"></canvas>
   <script>
-    // --- Global aliases from Matter.js ---
+    // --- Set up Matter.js ---
     const Engine = Matter.Engine,
           World = Matter.World,
           Bodies = Matter.Bodies,
           Body = Matter.Body,
-          Composite = Matter.Composite,
-          Runner = Matter.Runner;
+          Composite = Matter.Composite;
     
-    // Create engine and world.
     const engine = Engine.create();
-    // Set gravity (units are arbitrary; adjust as desired to “feel” like Earth).
-    engine.world.gravity.y = 1; // (You can experiment; our simulation units are in pixels.)
+    // Use a gravity value that “feels” realistic in our pixel scale.
+    engine.world.gravity.y = 1;
     
     // Get canvas and context.
     const canvas = document.getElementById('canvas');
     const context = canvas.getContext('2d');
     
-    // Keep track of our letter bodies.
+    // Arrays to hold letter bodies.
     const letterBodies = [];
-    
-    // Boundaries (ground and walls) will be created and updated.
     let boundaries = [];
     
-    // Resize canvas to fill window.
+    // Resize canvas and update boundaries.
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      // Recreate boundaries.
       updateBoundaries();
     }
-    
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
     
-    // Create (or update) boundaries as static bodies.
+    // Create or update boundaries (floor and side walls).
     function updateBoundaries() {
-      // Remove previous boundaries.
+      // Remove old boundaries.
       boundaries.forEach(b => World.remove(engine.world, b));
       boundaries = [];
       
       const thickness = 100;
-      // Floor
-      let floor = Bodies.rectangle(canvas.width / 2, canvas.height + thickness / 2, canvas.width * 2, thickness, { isStatic: true });
+      // Floor (extend width for safety)
+      const floor = Bodies.rectangle(canvas.width / 2, canvas.height + thickness / 2, canvas.width * 2, thickness, { isStatic: true });
       // Left wall
-      let leftWall = Bodies.rectangle(-thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
+      const leftWall = Bodies.rectangle(-thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
       // Right wall
-      let rightWall = Bodies.rectangle(canvas.width + thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
+      const rightWall = Bodies.rectangle(canvas.width + thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
       boundaries.push(floor, leftWall, rightWall);
       World.add(engine.world, boundaries);
     }
     
-    // --- Helper functions to convert an opentype.js Path to vertices ---
-    // Approximates quadratic and cubic curves by sampling points.
+    // --- Helper functions for converting font paths to vertices ---
+    // This function approximates quadratic and cubic curves by sampling points.
     function pathToVertices(path, sampleSteps = 10) {
       let vertices = [];
       let currX = 0, currY = 0;
-      // We take only the first subpath (outer shape)
       for (let cmd of path.commands) {
         if (cmd.type === 'M') {
-          // Start a new subpath; if already started, break to use only outer outline.
-          if (vertices.length > 0) break;
+          if (vertices.length > 0) break; // use only the first subpath
           currX = cmd.x;
           currY = cmd.y;
           vertices.push({ x: currX, y: currY });
@@ -95,7 +87,6 @@
           currY = cmd.y;
           vertices.push({ x: currX, y: currY });
         } else if (cmd.type === 'Q') {
-          // Quadratic: from current point to (cmd.x, cmd.y) with control (cmd.x1, cmd.y1)
           let cpX = cmd.x1, cpY = cmd.y1;
           let endX = cmd.x, endY = cmd.y;
           for (let t = 0; t <= 1; t += 1 / sampleSteps) {
@@ -106,7 +97,6 @@
           currX = endX;
           currY = endY;
         } else if (cmd.type === 'C') {
-          // Cubic: from current point to (cmd.x, cmd.y) with control points (cmd.x1, cmd.y1) and (cmd.x2, cmd.y2)
           let cp1X = cmd.x1, cp1Y = cmd.y1;
           let cp2X = cmd.x2, cp2Y = cmd.y2;
           let endX = cmd.x, endY = cmd.y;
@@ -124,12 +114,11 @@
           currX = endX;
           currY = endY;
         }
-        // 'Z' (closePath) is ignored since our vertices array should already form a loop.
       }
       return vertices;
     }
     
-    // Compute centroid of a set of points.
+    // Compute centroid for a set of vertices.
     function computeCentroid(vertices) {
       let sumX = 0, sumY = 0;
       vertices.forEach(v => {
@@ -139,24 +128,20 @@
       return { x: sumX / vertices.length, y: sumY / vertices.length };
     }
     
-    // --- Main rendering and simulation ---
-    
-    // We will run our own render loop (instead of Matter.Render) so that we can draw the letter shapes.
+    // --- Rendering and physics update ---
     function render() {
-      // Clear canvas
+      // Clear canvas.
       context.clearRect(0, 0, canvas.width, canvas.height);
-      // Optionally, fill background (dark)
       context.fillStyle = "#000";
       context.fillRect(0, 0, canvas.width, canvas.height);
       
-      // For each letter body, draw its shape using its stored Path2D.
+      // Draw each letter's shape.
       for (let body of letterBodies) {
         if (!body.customPath) continue;
         context.save();
-        // Translate to the body's position and apply rotation.
         context.translate(body.position.x, body.position.y);
         context.rotate(body.angle);
-        // Offset by the stored centroid so the Path2D is centered.
+        // Offset the drawing so that the shape is centered.
         context.translate(-body.customCentroid.x, -body.customCentroid.y);
         context.fillStyle = "white";
         context.fill(body.customPath);
@@ -164,18 +149,16 @@
       }
     }
     
-    // Main loop: update physics and then render.
-    function animate(time) {
-      Engine.update(engine, 16.66); // fixed time step (approx 60 fps)
+    function animate() {
+      Engine.update(engine, 16.66); // roughly 60 fps
       render();
       requestAnimationFrame(animate);
     }
-    
     requestAnimationFrame(animate);
     
-    // --- Load a font via opentype.js ---
-    // (Using Roboto Regular from Google Fonts on GitHub – ensure CORS is enabled.)
-    const fontURL = "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf";
+    // --- Load a font using opentype.js ---
+    // Using Roboto-Regular TTF from raw.githack.com
+    const fontURL = "https://raw.githack.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf";
     let loadedFont = null;
     
     opentype.load(fontURL, function(err, font) {
@@ -184,45 +167,39 @@
       } else {
         loadedFont = font;
         // Start spawning letters once the font is loaded.
-        setInterval(spawnLetter, 1000); // spawn a letter every second
+        setInterval(spawnLetter, 1000);
       }
     });
     
     // --- Spawn a random letter at the top ---
     function spawnLetter() {
       if (!loadedFont) return;
-      // Choose a random letter (A-Z)
-      const charCode = Math.floor(Math.random() * 26) + 65;
-      const letter = String.fromCharCode(charCode);
-      // Choose a random font size (in pixels)
-      const fontSize = Math.random() * 60 + 20; // between 20 and 80
+      // Choose a random letter A-Z.
+      const letter = String.fromCharCode(Math.floor(Math.random() * 26) + 65);
+      // Random font size between 20 and 80 pixels.
+      const fontSize = Math.random() * 60 + 20;
       
-      // Create an opentype.js Path for the letter.
-      // First get a path at (0,0); later we will compute its centroid.
+      // Get the font path at (0,0).
       let path = loadedFont.getPath(letter, 0, 0, fontSize);
-      // Convert the path to vertices (sample the outer subpath).
+      // Convert the path to vertices.
       let verts = pathToVertices(path, 10);
-      if (verts.length < 3) return; // not enough points
+      if (verts.length < 3) return;
       
-      // Compute the centroid of the vertices.
+      // Compute and adjust for centroid.
       let centroid = computeCentroid(verts);
-      // Adjust vertices to be centered at (0,0)
       let adjustedVerts = verts.map(v => ({ x: v.x - centroid.x, y: v.y - centroid.y }));
       
-      // Create a Matter body from these vertices.
-      // Choose a random x along the top.
-      const spawnX = Math.random() * (canvas.width - fontSize) + fontSize/2;
-      // Start above the visible screen.
+      // Choose a random x position at the top.
+      const spawnX = Math.random() * (canvas.width - fontSize) + fontSize / 2;
       const spawnY = -fontSize;
       
-      // Options: set frictionAir high to simulate water-like damping.
+      // Options: add air friction and restitution.
       const options = {
         frictionAir: 0.05,
         restitution: 0.2,
         density: 1
       };
       
-      // Matter.Bodies.fromVertices expects vertices in an array.
       let body;
       try {
         body = Bodies.fromVertices(spawnX, spawnY, [adjustedVerts], options, true);
@@ -230,21 +207,15 @@
         console.error("Failed to create body for letter", letter, e);
         return;
       }
-      
       if (!body) return;
       
-      // Store additional custom properties for rendering:
-      // Create a Path2D object from the letter's outline.
-      // To have the path centered, we generate a new path at (-centroid.x, -centroid.y).
+      // Create a Path2D for rendering.
       let centeredPath = loadedFont.getPath(letter, -centroid.x, -centroid.y, fontSize);
       let pathData = centeredPath.toPathData();
       body.customPath = new Path2D(pathData);
-      body.customCentroid = centroid; // used to offset drawing
-      
-      // Optionally store the letter (if you want to change color or for debugging)
+      body.customCentroid = centroid;
       body.letter = letter;
       
-      // Add to our world and our array.
       World.add(engine.world, body);
       letterBodies.push(body);
     }
