@@ -1,369 +1,409 @@
 <!DOCTYPE html>
-<html lang="sv">
-<head>
+<html lang="en">
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Motorcykelspel med Externt Sprit</title>
-    <!-- p5.js (aktiv CDN-länk) -->
+    <title>Skateboard Game with Ollie Animation (Local Files)</title>
+    <!-- p5.js CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }
-
-        canvas {
-            display: block;
-        }
+      body { margin: 0; padding: 0; overflow: hidden; }
+      canvas { display: block; }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <script>
-        let motorcycle;
-        let motorcycleSprite;
-        let obstacles = [];
-        let ramps = [];
-        let score = 0;
-        const speedLimit = 250;
-        const boostValue = 50;
-        let groundLevel;
-        let gravity = 0.8;
-        let gameOver = false;
-        let explosionParticles = [];
-        let jumpKeyActive = false;
-        let lastTapTime = 0;
-        const doubleTapThreshold = 300;
+      // Global variables
+      let skateboarder;
+      let skateboardSprite;
+      let obstacles = [];
+      let ramps = [];
+      let score = 0;
+      const speedLimit = 250; // km/h
+      const boostValue = 50;  // boost distributed over 60 frames
+      let groundLevel;
+      let gravity = 0.8;
+      let gameOver = false;
+      let explosionParticles = [];
+      let jumpKeyActive = false;
+      let lastTapTime = 0;
+      const doubleTapThreshold = 300;
 
-        // Preload the motorcycle sprite using a direct URL.
-        // Note: Make sure the URL points to an image that allows cross-origin requests.
-        function preload() {
-            motorcycleSprite = loadImage('spr_bike2man_0.png');
+      // Preload the skateboard sprite sheet from a local file.
+      // Make sure the file 'skateboard_spritesheet.png' is in the same folder as index.html.
+      function preload() {
+        skateboardSprite = loadImage('skateboard_spritesheet.png');
+      }
+
+      function setup() {
+        createCanvas(windowWidth, windowHeight);
+        groundLevel = height - 50;
+        resetGame();
+      }
+
+      function resetGame() {
+        score = 0;
+        gameOver = false;
+        explosionParticles = [];
+        skateboarder = new Skateboarder();
+        obstacles = [];
+        ramps = [];
+        // Create obstacles
+        for (let i = 0; i < 5; i++) {
+          obstacles.push(new Obstacle(random(width, width * 2), groundLevel));
         }
-
-        function setup() {
-            createCanvas(windowWidth, windowHeight);
-            groundLevel = height - 50;
-            resetGame();
-        }
-
-        function resetGame() {
-            score = 0;
-            gameOver = false;
-            explosionParticles = [];
-            motorcycle = new Motorcycle();
-            obstacles = [];
-            ramps = [];
-            for (let i = 0; i < 5; i++) {
-                obstacles.push(new Obstacle(random(width, width * 2), groundLevel));
-            }
-            for (let i = 0; i < 3; i++) {
-                let valid = false;
-                let x;
-                while (!valid) {
-                    x = random(width, width * 2);
-                    valid = true;
-                    for (let obs of obstacles) {
-                        if (abs(x - obs.x) < 150) {
-                            valid = false;
-                            break;
-                        }
-                    }
-                }
-                ramps.push(new Ramp(x, groundLevel));
-            }
-            loop();
-        }
-
-        function draw() {
-            background(135, 206, 235);
-            fill(34, 139, 34);
-            noStroke();
-            rect(0, groundLevel, width, height - groundLevel);
-
-            let rampCollision = false;
-            for (let ramp of ramps) {
-                ramp.update();
-                ramp.show();
-                if (ramp.hits(motorcycle)) {
-                    if (motorcycle.rampBoostTimer <= 0) {
-                        motorcycle.rampBoostTimer = 60;
-                    }
-                    rampCollision = true;
-                }
-            }
-            if (rampCollision && !motorcycle.autoJumped && motorcycle.jumpsRemaining > 0) {
-                motorcycle.jump();
-                motorcycle.autoJumped = true;
-            }
-            if (!rampCollision) {
-                motorcycle.autoJumped = false;
-            }
-
+        // Create ramps with at least 150 pixels distance from obstacles
+        for (let i = 0; i < 3; i++) {
+          let valid = false;
+          let x;
+          while (!valid) {
+            x = random(width, width * 2);
+            valid = true;
             for (let obs of obstacles) {
-                obs.update();
-                obs.show();
-                if (obs.hits(motorcycle)) {
-                    triggerExplosion(motorcycle.x, motorcycle.y);
-                    gameOver = true;
-                }
+              if (abs(x - obs.x) < 150) {
+                valid = false;
+                break;
+              }
             }
+          }
+          ramps.push(new Ramp(x, groundLevel));
+        }
+        loop();
+      }
 
-            if (!gameOver) {
-                motorcycle.update();
-                motorcycle.show();
+      function draw() {
+        background(135, 206, 235);
+        // Draw ground
+        fill(34, 139, 34);
+        noStroke();
+        rect(0, groundLevel, width, height - groundLevel);
+
+        // Update and draw ramps
+        let rampCollision = false;
+        for (let ramp of ramps) {
+          ramp.update();
+          ramp.show();
+          if (ramp.hits(skateboarder)) {
+            if (skateboarder.rampBoostTimer <= 0) {
+              skateboarder.rampBoostTimer = 60;
             }
-
-            fill(0);
-            textSize(16);
-            textAlign(LEFT, TOP);
-            text("Poäng: " + score, 10, 10);
-            text("Hastighet: " + nf(motorcycle.speed, 1, 2) + " km/h", 10, 30);
-
-            if (gameOver) {
-                for (let i = explosionParticles.length - 1; i >= 0; i--) {
-                    explosionParticles[i].update();
-                    explosionParticles[i].show();
-                    if (explosionParticles[i].lifespan <= 0) {
-                        explosionParticles.splice(i, 1);
-                    }
-                }
-                fill(255, 0, 0);
-                textSize(32);
-                textAlign(CENTER, CENTER);
-                text("GAME OVER\nTryck 'R' för att starta om", width / 2, height / 2);
-                if (explosionParticles.length === 0) {
-                    noLoop();
-                }
-            }
+            rampCollision = true;
+          }
+        }
+        // Automatic ollie when contacting a ramp (once per ramp)
+        if (rampCollision && !skateboarder.autoJumped && skateboarder.jumpsRemaining > 0) {
+          skateboarder.jump();
+          skateboarder.autoJumped = true;
+        }
+        if (!rampCollision) {
+          skateboarder.autoJumped = false;
         }
 
-        class Motorcycle {
-            constructor() {
-                this.x = width / 4;
-                this.y = groundLevel - 20;
-                this.width = 40;
-                this.height = 20;
-                this.speed = 0;
-                this.vy = 0;
-                this.accelerate = false;
-                this.rotation = 0;
-                this.flipTimer = 0;
-                this.jumpsRemaining = 2;
-                this.jumpBoostTimer = 0;
-                this.rampBoostTimer = 0;
-                this.autoJumped = false;
-            }
-            update() {
-                if (this.accelerate) {
-                    this.speed += 0.5;
-                } else {
-                    this.speed -= 0.3;
-                }
-                if (this.speed < 0) this.speed = 0;
-                if (this.speed > speedLimit) this.speed = speedLimit;
-                if (this.rampBoostTimer > 0) {
-                    this.speed += boostValue / 60;
-                    if (this.speed > speedLimit) this.speed = speedLimit;
-                    this.rampBoostTimer--;
-                }
-                if (this.jumpBoostTimer > 0 && jumpKeyActive) {
-                    this.vy -= 0.3;
-                    this.jumpBoostTimer--;
-                }
-                this.vy += gravity;
-                this.y += this.vy;
-                if (this.y > groundLevel - this.height) {
-                    this.y = groundLevel - this.height;
-                    this.vy = 0;
-                    this.jumpsRemaining = 2;
-                }
-                if (this.flipTimer > 0) {
-                    this.rotation += TWO_PI / 60;
-                    this.flipTimer--;
-                }
-            }
-            jump() {
-                if (this.jumpsRemaining > 0) {
-                    this.vy = -15;
-                    this.jumpsRemaining--;
-                }
-            }
-            show() {
-                push();
-                translate(this.x + this.width / 2, this.y - this.height / 2);
-                rotate(this.rotation);
-                imageMode(CENTER);
-                // Adjust the image size as needed.
-                image(motorcycleSprite, 0, 0, this.width * 2, this.height * 2);
-                pop();
-            }
+        // Update and draw obstacles
+        for (let obs of obstacles) {
+          obs.update();
+          obs.show();
+          if (obs.hits(skateboarder)) {
+            triggerExplosion(skateboarder.x, skateboarder.y);
+            gameOver = true;
+          }
         }
 
-        class Obstacle {
-            constructor(x, groundY) {
-                this.x = x;
-                this.y = groundY;
-                this.w = 20;
-                this.h = 30;
-                this.passed = false;
-            }
-            update() {
-                this.x -= motorcycle.speed / 10;
-                if (!this.passed && this.x + this.w < motorcycle.x) {
-                    score++;
-                    this.passed = true;
-                }
-                if (this.x < -this.w) {
-                    this.x = random(width, width * 2);
-                    this.passed = false;
-                }
-            }
-            show() {
-                fill(255, 0, 0);
-                rect(this.x, this.y - this.h, this.w, this.h);
-            }
-            hits(moto) {
-                return (
-                    moto.x < this.x + this.w &&
-                    moto.x + moto.width > this.x &&
-                    moto.y - moto.height < this.y &&
-                    moto.y > this.y - this.h
-                );
-            }
+        if (!gameOver) {
+          skateboarder.update();
+          skateboarder.show();
         }
 
-        class Ramp {
-            constructor(x, groundY) {
-                this.x = x;
-                this.y = groundY;
-                this.w = 100;
-                this.h = 20;
-            }
-            update() {
-                this.x -= motorcycle.speed / 10;
-                if (this.x < -this.w) {
-                    let valid = false;
-                    while (!valid) {
-                        this.x = random(width, width * 2);
-                        valid = true;
-                        for (let obs of obstacles) {
-                            if (abs(this.x - obs.x) < 150) {
-                                valid = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            show() {
-                fill(200, 200, 0);
-                triangle(
-                    this.x, this.y,
-                    this.x + this.w, this.y,
-                    this.x + this.w, this.y - this.h * 2
-                );
-            }
-            hits(moto) {
-                if (moto.y >= groundLevel - moto.height - 1) {
-                    return (
-                        moto.x < this.x + this.w &&
-                        moto.x + moto.width > this.x &&
-                        moto.y <= this.y &&
-                        moto.y > this.y - this.h * 2
-                    );
-                }
-                return false;
-            }
-        }
+        // Display score and speed
+        fill(0);
+        textSize(16);
+        textAlign(LEFT, TOP);
+        text("Score: " + score, 10, 10);
+        text("Speed: " + nf(skateboarder.speed, 1, 2) + " km/h", 10, 30);
 
-        class Particle {
-            constructor(x, y) {
-                this.x = x;
-                this.y = y;
-                this.vx = random(-3, 3);
-                this.vy = random(-3, 3);
-                this.lifespan = 255;
-                this.size = random(4, 8);
+        if (gameOver) {
+          for (let i = explosionParticles.length - 1; i >= 0; i--) {
+            explosionParticles[i].update();
+            explosionParticles[i].show();
+            if (explosionParticles[i].lifespan <= 0) {
+              explosionParticles.splice(i, 1);
             }
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                this.lifespan -= 4;
-            }
-            show() {
-                noStroke();
-                fill(255, this.lifespan, 0, this.lifespan);
-                ellipse(this.x, this.y, this.size);
-            }
+          }
+          fill(255, 0, 0);
+          textSize(32);
+          textAlign(CENTER, CENTER);
+          text("GAME OVER\nPress 'R' to restart", width / 2, height / 2);
+          if (explosionParticles.length === 0) {
+            noLoop();
+          }
         }
+      }
 
-        function triggerExplosion(x, y) {
-            for (let i = 0; i < 50; i++) {
-                explosionParticles.push(new Particle(x + motorcycle.width / 2, y));
-            }
+      // Skateboarder class with ollie animation using a sprite sheet.
+      class Skateboarder {
+        constructor() {
+          this.x = width / 4;
+          this.y = groundLevel - 20;
+          this.width = 40;
+          this.height = 20;
+          this.speed = 0;
+          this.vy = 0;
+          this.accelerate = false;
+          this.rotation = 0;
+          this.flipTimer = 0;
+          this.jumpsRemaining = 2;
+          this.jumpBoostTimer = 0;
+          this.rampBoostTimer = 0;
+          this.autoJumped = false;
+          // Properties for ollie animation:
+          this.isOllie = false;
+          this.ollieFrame = 0;
+          this.ollieCounter = 0;
+          this.ollieFrameCount = 9;      // Assuming 9 frames horizontally in the sprite sheet
+          this.ollieFrameDuration = 5;   // Each frame lasts 5 draw frames (adjust as needed)
         }
+        update() {
+          // Handle acceleration and friction
+          if (this.accelerate) {
+            this.speed += 0.5;
+          } else {
+            this.speed -= 0.3;
+          }
+          if (this.speed < 0) this.speed = 0;
+          if (this.speed > speedLimit) this.speed = speedLimit;
+          if (this.rampBoostTimer > 0) {
+            this.speed += boostValue / 60;
+            if (this.speed > speedLimit) this.speed = speedLimit;
+            this.rampBoostTimer--;
+          }
+          if (this.jumpBoostTimer > 0 && jumpKeyActive) {
+            this.vy -= 0.3;
+            this.jumpBoostTimer--;
+          }
+          // Gravity and vertical movement
+          this.vy += gravity;
+          this.y += this.vy;
+          if (this.y > groundLevel - this.height) {
+            this.y = groundLevel - this.height;
+            this.vy = 0;
+            this.jumpsRemaining = 2;
+          }
+          if (this.flipTimer > 0) {
+            this.rotation += TWO_PI / 60;
+            this.flipTimer--;
+          }
+          // Update ollie animation if active
+          if (this.isOllie) {
+            this.ollieCounter++;
+            if (this.ollieCounter >= this.ollieFrameDuration) {
+              this.ollieFrame++;
+              this.ollieCounter = 0;
+              if (this.ollieFrame >= this.ollieFrameCount) {
+                this.isOllie = false;
+                this.ollieFrame = 0;
+              }
+            }
+          }
+        }
+        jump() {
+          if (this.jumpsRemaining > 0) {
+            this.vy = -15;
+            this.jumpsRemaining--;
+            // Trigger ollie animation on jump
+            this.isOllie = true;
+            this.ollieFrame = 0;
+            this.ollieCounter = 0;
+          }
+        }
+        show() {
+          push();
+          // Translate and rotate around the skateboarder's center
+          translate(this.x + this.width / 2, this.y - this.height / 2);
+          rotate(this.rotation);
+          imageMode(CENTER);
+          // Calculate frame width from the sprite sheet
+          let frameWidth = skateboardSprite.width / this.ollieFrameCount;
+          if (this.isOllie) {
+            // Display the current frame of the ollie animation
+            let sx = frameWidth * this.ollieFrame;
+            image(skateboardSprite, 0, 0, this.width * 2, this.height * 2, sx, 0, frameWidth, skateboardSprite.height);
+          } else {
+            // Display the default frame (first frame)
+            image(skateboardSprite, 0, 0, this.width * 2, this.height * 2, 0, 0, frameWidth, skateboardSprite.height);
+          }
+          pop();
+        }
+      }
 
-        function keyPressed() {
-            if (gameOver) {
-                if (keyCode === 82) {
-                    resetGame();
-                }
-            } else {
-                if (keyCode === RIGHT_ARROW) {
-                    motorcycle.accelerate = true;
-                }
-                if (keyCode === UP_ARROW) {
-                    motorcycle.jump();
-                    jumpKeyActive = true;
-                    if (motorcycle.jumpBoostTimer <= 0) {
-                        motorcycle.jumpBoostTimer = 60;
-                    }
-                }
-                if (keyCode === LEFT_ARROW) {
-                    if (motorcycle.flipTimer <= 0) {
-                        motorcycle.flipTimer = 60;
-                    }
-                }
-            }
+      // Obstacle class
+      class Obstacle {
+        constructor(x, groundY) {
+          this.x = x;
+          this.y = groundY;
+          this.w = 20;
+          this.h = 30;
+          this.passed = false;
         }
+        update() {
+          this.x -= skateboarder.speed / 10;
+          if (!this.passed && this.x + this.w < skateboarder.x) {
+            score++;
+            this.passed = true;
+          }
+          if (this.x < -this.w) {
+            this.x = random(width, width * 2);
+            this.passed = false;
+          }
+        }
+        show() {
+          fill(255, 0, 0);
+          rect(this.x, this.y - this.h, this.w, this.h);
+        }
+        hits(skate) {
+          return (
+            skate.x < this.x + this.w &&
+            skate.x + skate.width > this.x &&
+            skate.y - skate.height < this.y &&
+            skate.y > this.y - this.h
+          );
+        }
+      }
 
-        function keyReleased() {
-            if (!gameOver) {
-                if (keyCode === RIGHT_ARROW) {
-                    motorcycle.accelerate = false;
+      // Ramp class
+      class Ramp {
+        constructor(x, groundY) {
+          this.x = x;
+          this.y = groundY;
+          this.w = 100;
+          this.h = 20;
+        }
+        update() {
+          this.x -= skateboarder.speed / 10;
+          if (this.x < -this.w) {
+            let valid = false;
+            while (!valid) {
+              this.x = random(width, width * 2);
+              valid = true;
+              for (let obs of obstacles) {
+                if (abs(this.x - obs.x) < 150) {
+                  valid = false;
+                  break;
                 }
-                if (keyCode === UP_ARROW) {
-                    jumpKeyActive = false;
-                }
+              }
             }
+          }
         }
+        show() {
+          fill(200, 200, 0);
+          triangle(
+            this.x, this.y,
+            this.x + this.w, this.y,
+            this.x + this.w, this.y - this.h * 2
+          );
+        }
+        hits(skate) {
+          if (skate.y >= groundLevel - skate.height - 1) {
+            return (
+              skate.x < this.x + this.w &&
+              skate.x + skate.width > this.x &&
+              skate.y <= this.y &&
+              skate.y > this.y - this.h * 2
+            );
+          }
+          return false;
+        }
+      }
 
-        function touchStarted() {
-            if (!gameOver) {
-                let currentTime = millis();
-                if (currentTime - lastTapTime < doubleTapThreshold) {
-                    motorcycle.jump();
-                } else {
-                    motorcycle.accelerate = true;
-                }
-                lastTapTime = currentTime;
-            }
+      // Particle class for explosion effects
+      class Particle {
+        constructor(x, y) {
+          this.x = x;
+          this.y = y;
+          this.vx = random(-3, 3);
+          this.vy = random(-3, 3);
+          this.lifespan = 255;
+          this.size = random(4, 8);
         }
+        update() {
+          this.x += this.vx;
+          this.y += this.vy;
+          this.lifespan -= 4;
+        }
+        show() {
+          noStroke();
+          fill(255, this.lifespan, 0, this.lifespan);
+          ellipse(this.x, this.y, this.size);
+        }
+      }
 
-        function touchEnded() {
-            if (!gameOver) {
-                motorcycle.accelerate = false;
-            }
+      function triggerExplosion(x, y) {
+        for (let i = 0; i < 50; i++) {
+          explosionParticles.push(new Particle(x + skateboarder.width / 2, y));
         }
+      }
 
-        function windowResized() {
-            resizeCanvas(windowWidth, windowHeight);
-            groundLevel = height - 50;
-            if (motorcycle.y > groundLevel - motorcycle.height) {
-                motorcycle.y = groundLevel - motorcycle.height;
+      // Desktop keyboard controls
+      function keyPressed() {
+        if (gameOver) {
+          if (keyCode === 82) { // R to restart
+            resetGame();
+          }
+        } else {
+          if (keyCode === RIGHT_ARROW) {
+            skateboarder.accelerate = true;
+          }
+          if (keyCode === UP_ARROW) {
+            skateboarder.jump();
+            jumpKeyActive = true;
+            if (skateboarder.jumpBoostTimer <= 0) {
+              skateboarder.jumpBoostTimer = 60;
             }
+          }
+          if (keyCode === LEFT_ARROW) {
+            if (skateboarder.flipTimer <= 0) {
+              skateboarder.flipTimer = 60;
+            }
+          }
         }
+      }
+
+      function keyReleased() {
+        if (!gameOver) {
+          if (keyCode === RIGHT_ARROW) {
+            skateboarder.accelerate = false;
+          }
+          if (keyCode === UP_ARROW) {
+            jumpKeyActive = false;
+          }
+        }
+      }
+
+      // Mobile touch controls:
+      // Hold anywhere to accelerate; double-tap to jump.
+      function touchStarted() {
+        if (!gameOver) {
+          let currentTime = millis();
+          if (currentTime - lastTapTime < doubleTapThreshold) {
+            skateboarder.jump();
+          } else {
+            skateboarder.accelerate = true;
+          }
+          lastTapTime = currentTime;
+        }
+      }
+      function touchEnded() {
+        if (!gameOver) {
+          skateboarder.accelerate = false;
+        }
+      }
+
+      function windowResized() {
+        resizeCanvas(windowWidth, windowHeight);
+        groundLevel = height - 50;
+        if (skateboarder.y > groundLevel - skateboarder.height) {
+          skateboarder.y = groundLevel - skateboarder.height;
+        }
+      }
     </script>
-</body>
+  </body>
 </html>
