@@ -1,224 +1,369 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Falling Letters with Realistic Physics</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background-color: #000; /* Dark background */
-    }
-    canvas {
-      display: block;
-      background-color: #000;
-    }
-  </style>
-  <!-- Load Matter.js from unpkg -->
-  <script src="https://unpkg.com/matter-js@0.19.0/build/matter.min.js"></script>
-  <!-- Load poly-decomp from unpkg -->
-  <script src="https://unpkg.com/poly-decomp@0.3.0/build/decomp.min.js"></script>
-  <!-- Load opentype.js from unpkg -->
-  <script src="https://unpkg.com/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Motorcykelspel med Externt Sprit</title>
+    <!-- p5.js (aktiv CDN-länk) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
-  <script>
-    // --- Set up Matter.js ---
-    const Engine = Matter.Engine,
-          World = Matter.World,
-          Bodies = Matter.Bodies,
-          Body = Matter.Body,
-          Composite = Matter.Composite;
-    
-    const engine = Engine.create();
-    // Use a gravity value that “feels” realistic in our pixel scale.
-    engine.world.gravity.y = 1;
-    
-    // Get canvas and context.
-    const canvas = document.getElementById('canvas');
-    const context = canvas.getContext('2d');
-    
-    // Arrays to hold letter bodies.
-    const letterBodies = [];
-    let boundaries = [];
-    
-    // Resize canvas and update boundaries.
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      updateBoundaries();
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-    
-    // Create or update boundaries (floor and side walls).
-    function updateBoundaries() {
-      // Remove old boundaries.
-      boundaries.forEach(b => World.remove(engine.world, b));
-      boundaries = [];
-      
-      const thickness = 100;
-      // Floor (extend width for safety)
-      const floor = Bodies.rectangle(canvas.width / 2, canvas.height + thickness / 2, canvas.width * 2, thickness, { isStatic: true });
-      // Left wall
-      const leftWall = Bodies.rectangle(-thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
-      // Right wall
-      const rightWall = Bodies.rectangle(canvas.width + thickness / 2, canvas.height / 2, thickness, canvas.height * 2, { isStatic: true });
-      boundaries.push(floor, leftWall, rightWall);
-      World.add(engine.world, boundaries);
-    }
-    
-    // --- Helper functions for converting font paths to vertices ---
-    // This function approximates quadratic and cubic curves by sampling points.
-    function pathToVertices(path, sampleSteps = 10) {
-      let vertices = [];
-      let currX = 0, currY = 0;
-      for (let cmd of path.commands) {
-        if (cmd.type === 'M') {
-          if (vertices.length > 0) break; // use only the first subpath
-          currX = cmd.x;
-          currY = cmd.y;
-          vertices.push({ x: currX, y: currY });
-        } else if (cmd.type === 'L') {
-          currX = cmd.x;
-          currY = cmd.y;
-          vertices.push({ x: currX, y: currY });
-        } else if (cmd.type === 'Q') {
-          let cpX = cmd.x1, cpY = cmd.y1;
-          let endX = cmd.x, endY = cmd.y;
-          for (let t = 0; t <= 1; t += 1 / sampleSteps) {
-            let x = (1 - t) * (1 - t) * currX + 2 * (1 - t) * t * cpX + t * t * endX;
-            let y = (1 - t) * (1 - t) * currY + 2 * (1 - t) * t * cpY + t * t * endY;
-            vertices.push({ x, y });
-          }
-          currX = endX;
-          currY = endY;
-        } else if (cmd.type === 'C') {
-          let cp1X = cmd.x1, cp1Y = cmd.y1;
-          let cp2X = cmd.x2, cp2Y = cmd.y2;
-          let endX = cmd.x, endY = cmd.y;
-          for (let t = 0; t <= 1; t += 1 / sampleSteps) {
-            let x = Math.pow(1 - t, 3) * currX +
-                    3 * Math.pow(1 - t, 2) * t * cp1X +
-                    3 * (1 - t) * t * t * cp2X +
-                    Math.pow(t, 3) * endX;
-            let y = Math.pow(1 - t, 3) * currY +
-                    3 * Math.pow(1 - t, 2) * t * cp1Y +
-                    3 * (1 - t) * t * t * cp2Y +
-                    Math.pow(t, 3) * endY;
-            vertices.push({ x, y });
-          }
-          currX = endX;
-          currY = endY;
+    <script>
+        let motorcycle;
+        let motorcycleSprite;
+        let obstacles = [];
+        let ramps = [];
+        let score = 0;
+        const speedLimit = 250;
+        const boostValue = 50;
+        let groundLevel;
+        let gravity = 0.8;
+        let gameOver = false;
+        let explosionParticles = [];
+        let jumpKeyActive = false;
+        let lastTapTime = 0;
+        const doubleTapThreshold = 300;
+
+        // Preload the motorcycle sprite using a direct URL.
+        // Note: Make sure the URL points to an image that allows cross-origin requests.
+        function preload() {
+            motorcycleSprite = loadImage('https://opengameart.org/sites/default/files/spr_bike2man_0.png');
         }
-      }
-      return vertices;
-    }
-    
-    // Compute centroid for a set of vertices.
-    function computeCentroid(vertices) {
-      let sumX = 0, sumY = 0;
-      vertices.forEach(v => {
-        sumX += v.x;
-        sumY += v.y;
-      });
-      return { x: sumX / vertices.length, y: sumY / vertices.length };
-    }
-    
-    // --- Rendering and physics update ---
-    function render() {
-      // Clear canvas.
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#000";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw each letter's shape.
-      for (let body of letterBodies) {
-        if (!body.customPath) continue;
-        context.save();
-        context.translate(body.position.x, body.position.y);
-        context.rotate(body.angle);
-        // Offset the drawing so that the shape is centered.
-        context.translate(-body.customCentroid.x, -body.customCentroid.y);
-        context.fillStyle = "white";
-        context.fill(body.customPath);
-        context.restore();
-      }
-    }
-    
-    function animate() {
-      Engine.update(engine, 16.66); // roughly 60 fps
-      render();
-      requestAnimationFrame(animate);
-    }
-    requestAnimationFrame(animate);
-    
-    // --- Load a font using opentype.js ---
-    // Using Roboto-Regular TTF from raw.githack.com
-    const fontURL = "https://raw.githack.com/google/fonts/main/apache/roboto/Roboto-Regular.ttf";
-    let loadedFont = null;
-    
-    opentype.load(fontURL, function(err, font) {
-      if (err) {
-        console.error('Could not load font: ' + err);
-      } else {
-        loadedFont = font;
-        // Start spawning letters once the font is loaded.
-        setInterval(spawnLetter, 1000);
-      }
-    });
-    
-    // --- Spawn a random letter at the top ---
-    function spawnLetter() {
-      if (!loadedFont) return;
-      // Choose a random letter A-Z.
-      const letter = String.fromCharCode(Math.floor(Math.random() * 26) + 65);
-      // Random font size between 20 and 80 pixels.
-      const fontSize = Math.random() * 60 + 20;
-      
-      // Get the font path at (0,0).
-      let path = loadedFont.getPath(letter, 0, 0, fontSize);
-      // Convert the path to vertices.
-      let verts = pathToVertices(path, 10);
-      if (verts.length < 3) return;
-      
-      // Compute and adjust for centroid.
-      let centroid = computeCentroid(verts);
-      let adjustedVerts = verts.map(v => ({ x: v.x - centroid.x, y: v.y - centroid.y }));
-      
-      // Choose a random x position at the top.
-      const spawnX = Math.random() * (canvas.width - fontSize) + fontSize / 2;
-      const spawnY = -fontSize;
-      
-      // Options: add air friction and restitution.
-      const options = {
-        frictionAir: 0.05,
-        restitution: 0.2,
-        density: 1
-      };
-      
-      let body;
-      try {
-        body = Bodies.fromVertices(spawnX, spawnY, [adjustedVerts], options, true);
-      } catch (e) {
-        console.error("Failed to create body for letter", letter, e);
-        return;
-      }
-      if (!body) return;
-      
-      // Create a Path2D for rendering.
-      let centeredPath = loadedFont.getPath(letter, -centroid.x, -centroid.y, fontSize);
-      let pathData = centeredPath.toPathData();
-      body.customPath = new Path2D(pathData);
-      body.customCentroid = centroid;
-      body.letter = letter;
-      
-      World.add(engine.world, body);
-      letterBodies.push(body);
-    }
-  </script>
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            groundLevel = height - 50;
+            resetGame();
+        }
+
+        function resetGame() {
+            score = 0;
+            gameOver = false;
+            explosionParticles = [];
+            motorcycle = new Motorcycle();
+            obstacles = [];
+            ramps = [];
+            for (let i = 0; i < 5; i++) {
+                obstacles.push(new Obstacle(random(width, width * 2), groundLevel));
+            }
+            for (let i = 0; i < 3; i++) {
+                let valid = false;
+                let x;
+                while (!valid) {
+                    x = random(width, width * 2);
+                    valid = true;
+                    for (let obs of obstacles) {
+                        if (abs(x - obs.x) < 150) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                ramps.push(new Ramp(x, groundLevel));
+            }
+            loop();
+        }
+
+        function draw() {
+            background(135, 206, 235);
+            fill(34, 139, 34);
+            noStroke();
+            rect(0, groundLevel, width, height - groundLevel);
+
+            let rampCollision = false;
+            for (let ramp of ramps) {
+                ramp.update();
+                ramp.show();
+                if (ramp.hits(motorcycle)) {
+                    if (motorcycle.rampBoostTimer <= 0) {
+                        motorcycle.rampBoostTimer = 60;
+                    }
+                    rampCollision = true;
+                }
+            }
+            if (rampCollision && !motorcycle.autoJumped && motorcycle.jumpsRemaining > 0) {
+                motorcycle.jump();
+                motorcycle.autoJumped = true;
+            }
+            if (!rampCollision) {
+                motorcycle.autoJumped = false;
+            }
+
+            for (let obs of obstacles) {
+                obs.update();
+                obs.show();
+                if (obs.hits(motorcycle)) {
+                    triggerExplosion(motorcycle.x, motorcycle.y);
+                    gameOver = true;
+                }
+            }
+
+            if (!gameOver) {
+                motorcycle.update();
+                motorcycle.show();
+            }
+
+            fill(0);
+            textSize(16);
+            textAlign(LEFT, TOP);
+            text("Poäng: " + score, 10, 10);
+            text("Hastighet: " + nf(motorcycle.speed, 1, 2) + " km/h", 10, 30);
+
+            if (gameOver) {
+                for (let i = explosionParticles.length - 1; i >= 0; i--) {
+                    explosionParticles[i].update();
+                    explosionParticles[i].show();
+                    if (explosionParticles[i].lifespan <= 0) {
+                        explosionParticles.splice(i, 1);
+                    }
+                }
+                fill(255, 0, 0);
+                textSize(32);
+                textAlign(CENTER, CENTER);
+                text("GAME OVER\nTryck 'R' för att starta om", width / 2, height / 2);
+                if (explosionParticles.length === 0) {
+                    noLoop();
+                }
+            }
+        }
+
+        class Motorcycle {
+            constructor() {
+                this.x = width / 4;
+                this.y = groundLevel - 20;
+                this.width = 40;
+                this.height = 20;
+                this.speed = 0;
+                this.vy = 0;
+                this.accelerate = false;
+                this.rotation = 0;
+                this.flipTimer = 0;
+                this.jumpsRemaining = 2;
+                this.jumpBoostTimer = 0;
+                this.rampBoostTimer = 0;
+                this.autoJumped = false;
+            }
+            update() {
+                if (this.accelerate) {
+                    this.speed += 0.5;
+                } else {
+                    this.speed -= 0.3;
+                }
+                if (this.speed < 0) this.speed = 0;
+                if (this.speed > speedLimit) this.speed = speedLimit;
+                if (this.rampBoostTimer > 0) {
+                    this.speed += boostValue / 60;
+                    if (this.speed > speedLimit) this.speed = speedLimit;
+                    this.rampBoostTimer--;
+                }
+                if (this.jumpBoostTimer > 0 && jumpKeyActive) {
+                    this.vy -= 0.3;
+                    this.jumpBoostTimer--;
+                }
+                this.vy += gravity;
+                this.y += this.vy;
+                if (this.y > groundLevel - this.height) {
+                    this.y = groundLevel - this.height;
+                    this.vy = 0;
+                    this.jumpsRemaining = 2;
+                }
+                if (this.flipTimer > 0) {
+                    this.rotation += TWO_PI / 60;
+                    this.flipTimer--;
+                }
+            }
+            jump() {
+                if (this.jumpsRemaining > 0) {
+                    this.vy = -15;
+                    this.jumpsRemaining--;
+                }
+            }
+            show() {
+                push();
+                translate(this.x + this.width / 2, this.y - this.height / 2);
+                rotate(this.rotation);
+                imageMode(CENTER);
+                // Adjust the image size as needed.
+                image(motorcycleSprite, 0, 0, this.width * 2, this.height * 2);
+                pop();
+            }
+        }
+
+        class Obstacle {
+            constructor(x, groundY) {
+                this.x = x;
+                this.y = groundY;
+                this.w = 20;
+                this.h = 30;
+                this.passed = false;
+            }
+            update() {
+                this.x -= motorcycle.speed / 10;
+                if (!this.passed && this.x + this.w < motorcycle.x) {
+                    score++;
+                    this.passed = true;
+                }
+                if (this.x < -this.w) {
+                    this.x = random(width, width * 2);
+                    this.passed = false;
+                }
+            }
+            show() {
+                fill(255, 0, 0);
+                rect(this.x, this.y - this.h, this.w, this.h);
+            }
+            hits(moto) {
+                return (
+                    moto.x < this.x + this.w &&
+                    moto.x + moto.width > this.x &&
+                    moto.y - moto.height < this.y &&
+                    moto.y > this.y - this.h
+                );
+            }
+        }
+
+        class Ramp {
+            constructor(x, groundY) {
+                this.x = x;
+                this.y = groundY;
+                this.w = 100;
+                this.h = 20;
+            }
+            update() {
+                this.x -= motorcycle.speed / 10;
+                if (this.x < -this.w) {
+                    let valid = false;
+                    while (!valid) {
+                        this.x = random(width, width * 2);
+                        valid = true;
+                        for (let obs of obstacles) {
+                            if (abs(this.x - obs.x) < 150) {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            show() {
+                fill(200, 200, 0);
+                triangle(
+                    this.x, this.y,
+                    this.x + this.w, this.y,
+                    this.x + this.w, this.y - this.h * 2
+                );
+            }
+            hits(moto) {
+                if (moto.y >= groundLevel - moto.height - 1) {
+                    return (
+                        moto.x < this.x + this.w &&
+                        moto.x + moto.width > this.x &&
+                        moto.y <= this.y &&
+                        moto.y > this.y - this.h * 2
+                    );
+                }
+                return false;
+            }
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = random(-3, 3);
+                this.vy = random(-3, 3);
+                this.lifespan = 255;
+                this.size = random(4, 8);
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.lifespan -= 4;
+            }
+            show() {
+                noStroke();
+                fill(255, this.lifespan, 0, this.lifespan);
+                ellipse(this.x, this.y, this.size);
+            }
+        }
+
+        function triggerExplosion(x, y) {
+            for (let i = 0; i < 50; i++) {
+                explosionParticles.push(new Particle(x + motorcycle.width / 2, y));
+            }
+        }
+
+        function keyPressed() {
+            if (gameOver) {
+                if (keyCode === 82) {
+                    resetGame();
+                }
+            } else {
+                if (keyCode === RIGHT_ARROW) {
+                    motorcycle.accelerate = true;
+                }
+                if (keyCode === UP_ARROW) {
+                    motorcycle.jump();
+                    jumpKeyActive = true;
+                    if (motorcycle.jumpBoostTimer <= 0) {
+                        motorcycle.jumpBoostTimer = 60;
+                    }
+                }
+                if (keyCode === LEFT_ARROW) {
+                    if (motorcycle.flipTimer <= 0) {
+                        motorcycle.flipTimer = 60;
+                    }
+                }
+            }
+        }
+
+        function keyReleased() {
+            if (!gameOver) {
+                if (keyCode === RIGHT_ARROW) {
+                    motorcycle.accelerate = false;
+                }
+                if (keyCode === UP_ARROW) {
+                    jumpKeyActive = false;
+                }
+            }
+        }
+
+        function touchStarted() {
+            if (!gameOver) {
+                let currentTime = millis();
+                if (currentTime - lastTapTime < doubleTapThreshold) {
+                    motorcycle.jump();
+                } else {
+                    motorcycle.accelerate = true;
+                }
+                lastTapTime = currentTime;
+            }
+        }
+
+        function touchEnded() {
+            if (!gameOver) {
+                motorcycle.accelerate = false;
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            groundLevel = height - 50;
+            if (motorcycle.y > groundLevel - motorcycle.height) {
+                motorcycle.y = groundLevel - motorcycle.height;
+            }
+        }
+    </script>
 </body>
 </html>
